@@ -52,6 +52,12 @@ func Migrate(g *gorm.DB) error {
 		&model.Setting{},
 		&model.Admin{},
 		&model.APIToken{},
+		&model.Inbound{},
+		&model.Outbound{},
+		&model.Client{},
+		&model.Certificate{},
+		&model.TrafficRecord{},
+		&model.RoutingRule{},
 	); err != nil {
 		return fmt.Errorf("db: 迁移失败: %w", err)
 	}
