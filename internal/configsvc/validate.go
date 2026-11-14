@@ -1,0 +1,291 @@
+package configsvc
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"regexp"
+
+	"github.com/sle58083/cx-box/internal/renderer"
+	"github.com/sle58083/cx-box/internal/model"
+	"gorm.io/gorm"
+)
+
+// ValidationError 是可识别的业务校验错误（映射为统一响应码 4xxx）。
+type ValidationError struct{ msg string }
+
+func (e *ValidationError) Error() string { return e.msg }
+
+func newValidationError(msg string) *ValidationError { return &ValidationError{msg: msg} }
+
+// ValidationErrorf 构造校验错误。
+func ValidationErrorf(format string, a ...any) error {
+	return &ValidationError{msg: fmt.Sprintf(format, a...)}
+}
+
+// IsValidationError 判断是否为业务校验错误（含 %w 包裹）。
+func IsValidationError(err error) bool {
+	var ve *ValidationError
+	return errors.As(err, &ve)
+}
+
+// 业务校验错误哨兵（保存前第一层校验，system_design.md §5.5）。
+var (
+	ErrNameRequired      = newValidationError("configsvc: name 必填")
+	ErrInvalidPort       = newValidationError("configsvc: 端口必须在 1-65535")
+	ErrTagConflict       = newValidationError("configsvc: tag 在分组+节点范围内已存在")
+	ErrPortConflict      = newValidationError("configsvc: 相同 listen+port 的入站已存在")
+	ErrReferenceNotFound = newValidationError("configsvc: 引用的 tag 不存在")
+	ErrInvalidRuleType   = newValidationError("configsvc: rule_type 非法")
+	ErrInvalidRuleValue  = newValidationError("configsvc: rule value 非法")
+	ErrProtocolNotFound  = newValidationError("configsvc: 未注册的协议类型")
+)
+
+var domainRegex = regexp.MustCompile(`^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
+
+// validateInbound 入站保存前业务校验 + 委托协议校验。
+func validateInbound(ctx context.Context, db *gorm.DB, cfg *model.Inbound, existing *model.Inbound) error {
+	if cfg.Name == "" {
+		return ErrNameRequired
+	}
+	if cfg.Type == "" {
+		return ErrProtocolNotFound
+	}
+	r, ok := renderer.Get(cfg.Type)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrProtocolNotFound, cfg.Type)
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		return ErrInvalidPort
+	}
+	if err := r.ValidateInbound(*cfg); err != nil {
+		return ValidationErrorf("%v", err)
+	}
+	if err := validateInboundCert(ctx, db, cfg); err != nil {
+		return err
+	}
+
+	if err := checkInboundTagUnique(ctx, db, cfg, existing); err != nil {
+		return err
+	}
+	return checkPortConflict(ctx, db, cfg, existing)
+}
+
+// validateInboundCert 校验入站证书绑定：cert_id 存在 + 协议允许 plain TLS。
+//
+// 「仅 plain TLS 类允许绑定证书」：协议 Meta().TLSAllowed 含 TLSModePlain
+// 才可绑定（vmess / shadowsocks 无原生 TLS，禁止绑定）。
+func validateInboundCert(ctx context.Context, db *gorm.DB, cfg *model.Inbound) error {
+	if cfg.CertID == nil {
+		return nil
+	}
+	r, ok := renderer.Get(cfg.Type)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrProtocolNotFound, cfg.Type)
+	}
+	if !hasTLSPlain(r.Meta()) {
+		return ValidationErrorf("协议 %q 不支持绑定证书（仅 plain TLS 类协议允许）", cfg.Type)
+	}
+
+	var cnt int64
+	if err := db.WithContext(ctx).Model(&model.Certificate{}).
+		Where("id = ?", *cfg.CertID).Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt == 0 {
+		return ValidationErrorf("cert_id 对应的证书不存在: %s", *cfg.CertID)
+	}
+	return nil
+}
+
+// hasTLSPlain 判断协议元数据是否允许普通 TLS。
+func hasTLSPlain(meta renderer.ProtocolMeta) bool {
+	for _, m := range meta.TLSAllowed {
+		if m == renderer.TLSModePlain {
+			return true
+		}
+	}
+	return false
+}
+
+// validateOutbound 出站保存前业务校验 + 委托协议校验。
+func validateOutbound(ctx context.Context, db *gorm.DB, cfg *model.Outbound, existing *model.Outbound) error {
+	if cfg.Name == "" {
+		return ErrNameRequired
+	}
+	if cfg.Type == "" {
+		return ErrProtocolNotFound
+	}
+	r, ok := renderer.Get(cfg.Type)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrProtocolNotFound, cfg.Type)
+	}
+	if err := r.ValidateOutbound(*cfg); err != nil {
+		return ValidationErrorf("%v", err)
+	}
+	return checkOutboundTagUnique(ctx, db, cfg, existing)
+}
+
+// validateRoutingRule 路由规则保存前业务校验（含引用完整性）。
+func validateRoutingRule(ctx context.Context, db *gorm.DB, cfg *model.RoutingRule, existing *model.RoutingRule) error {
+	if cfg.Name == "" {
+		return ErrNameRequired
+	}
+	if !validRuleType(cfg.RuleType) {
+		return ErrInvalidRuleType
+	}
+	if cfg.Value == "" {
+		return ErrInvalidRuleValue
+	}
+	if cfg.RuleType == "domain" && !domainRegex.MatchString(cfg.Value) {
+		return ValidationErrorf("rule value 域名 %q 非法", cfg.Value)
+	}
+	if cfg.RuleType == "ip" {
+		if net.ParseIP(cfg.Value) == nil {
+			if _, _, err := net.ParseCIDR(cfg.Value); err != nil {
+				return ValidationErrorf("rule value IP/CIDR %q 非法", cfg.Value)
+			}
+		}
+	}
+	if cfg.Priority < 0 {
+		return ValidationErrorf("priority 不能为负")
+	}
+
+	if cfg.OutboundTag != "" && !outboundTagExists(ctx, db, cfg.OutboundTag) {
+		return fmt.Errorf("%w: outbound %q", ErrReferenceNotFound, cfg.OutboundTag)
+	}
+	var tags []string
+	if len(cfg.InboundTags) > 0 {
+		if err := json.Unmarshal(cfg.InboundTags, &tags); err != nil {
+			return ValidationErrorf("inbound_tags 必须为字符串数组: %v", err)
+		}
+	}
+	for _, t := range tags {
+		if !inboundTagExists(ctx, db, t) {
+			return fmt.Errorf("%w: inbound %q", ErrReferenceNotFound, t)
+		}
+	}
+	_ = existing
+	return nil
+}
+
+func validRuleType(t string) bool {
+	switch t {
+	case "geosite", "geoip", "domain", "ip", "protocol":
+		return true
+	}
+	return false
+}
+
+func checkInboundTagUnique(ctx context.Context, db *gorm.DB, cfg *model.Inbound, existing *model.Inbound) error {
+	q := db.WithContext(ctx).Model(&model.Inbound{}).
+		Where("name = ?", cfg.Name)
+	if existing != nil {
+		q = q.Where("id <> ?", existing.ID)
+	}
+	var cnt int64
+	if err := q.Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return ErrTagConflict
+	}
+	return nil
+}
+
+func checkOutboundTagUnique(ctx context.Context, db *gorm.DB, cfg *model.Outbound, existing *model.Outbound) error {
+	q := db.WithContext(ctx).Model(&model.Outbound{}).
+		Where("name = ?", cfg.Name)
+	if existing != nil {
+		q = q.Where("id <> ?", existing.ID)
+	}
+	var cnt int64
+	if err := q.Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return ErrTagConflict
+	}
+	return nil
+}
+
+func checkPortConflict(ctx context.Context, db *gorm.DB, cfg *model.Inbound, existing *model.Inbound) error {
+	q := db.WithContext(ctx).Model(&model.Inbound{}).
+		Where("port = ? AND status <> ?", cfg.Port, model.StatusDisabled)
+	if cfg.Listen != "" {
+		q = q.Where("listen = ?", cfg.Listen)
+	}
+	if existing != nil {
+		q = q.Where("id <> ?", existing.ID)
+	}
+	var cnt int64
+	if err := q.Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return ErrPortConflict
+	}
+	return nil
+}
+
+// outboundTagExists 判断是否存在指定 enabled 出站 tag（全局）。
+func outboundTagExists(ctx context.Context, db *gorm.DB, tag string) bool {
+	var cnt int64
+	db.WithContext(ctx).Model(&model.Outbound{}).
+		Where("name = ? AND status <> ?", tag, model.StatusDisabled).
+		Count(&cnt)
+	return cnt > 0
+}
+
+// inboundTagExists 判断是否存在指定 enabled 入站 tag（全局）。
+func inboundTagExists(ctx context.Context, db *gorm.DB, tag string) bool {
+	var cnt int64
+	db.WithContext(ctx).Model(&model.Inbound{}).
+		Where("name = ? AND status <> ?", tag, model.StatusDisabled).
+		Count(&cnt)
+	return cnt > 0
+}
+
+// checkInboundReferences 删除入站前检查路由规则引用。
+//
+// SQLite 无 PostgreSQL 的 jsonb @> 包含运算符（且 inbound_tags 在 SQLite 下为 BLOB），
+// 故改为读取引用列表后在应用层判断包含关系。面板路由规则规模有限，性能可接受。
+func checkInboundReferences(ctx context.Context, db *gorm.DB, tag string) error {
+	var rules []model.RoutingRule
+	if err := db.WithContext(ctx).Model(&model.RoutingRule{}).
+		Select("inbound_tags").Find(&rules).Error; err != nil {
+		return err
+	}
+
+	cnt := 0
+	for _, r := range rules {
+		var tags []string
+		if err := json.Unmarshal(r.InboundTags, &tags); err != nil {
+			continue
+		}
+		for _, t := range tags {
+			if t == tag {
+				cnt++
+				break
+			}
+		}
+	}
+	if cnt > 0 {
+		return ValidationErrorf("入站 %q 被 %d 条路由规则引用，禁止删除", tag, cnt)
+	}
+	return nil
+}
+
+func checkOutboundReferences(ctx context.Context, db *gorm.DB, tag string) error {
+	var cnt int64
+	if err := db.WithContext(ctx).Model(&model.RoutingRule{}).
+		Where("outbound_tag = ?", tag).Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return ValidationErrorf("出站 %q 被 %d 条路由规则引用，禁止删除", tag, cnt)
+	}
+	return nil
+}
