@@ -1,0 +1,24 @@
+# Binaries
+/sui
+/cx-box
+*.exe
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Frontend build
+web/node_modules/
+web/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Local
+.env
+.workbuddy/
