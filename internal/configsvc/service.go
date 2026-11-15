@@ -262,10 +262,11 @@ func (s *Service) activeUsers(ctx context.Context) ([]renderer.ProxyUser, error)
 			continue
 		}
 		users = append(users, renderer.ProxyUser{
-			ID:       c.ID.String(),
-			Name:     c.ID.String(),
-			UUID:     c.UUID,
-			Password: c.Password,
+			ID:         c.ID.String(),
+			Name:       c.ID.String(),
+			UUID:       c.UUID,
+			InboundIDs: c.SelectedInboundIDs(),
+			Password:   c.Password,
 		})
 	}
 	return users, nil
