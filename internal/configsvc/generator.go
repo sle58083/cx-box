@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/sle58083/cx-box/internal/renderer"
 	"github.com/sle58083/cx-box/internal/model"
+	"github.com/sle58083/cx-box/internal/renderer"
 )
 
 // ErrUnknownProtocol 表示未注册的协议类型。
@@ -84,48 +84,16 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 	}
 
 	// 4. 全局结构拼装。
+	// 注意：不生成 experimental.v2ray_api —— 那是 yc-box 多机版给 edge-agent
+	// gRPC 采流量用的，单体版无此需求；且 sing-box 官方构建不带 with_v2ray_api，
+	// 带上这一节会让 `sing-box check` 直接失败、内核永远起不来（P4 实测踩到）。
 	doc := map[string]any{
-		kInbounds:     inbounds,
-		kOutbounds:    outbounds,
-		kExperimental: buildV2RayAPI(enabledInbounds, enabledOutbounds, ctx.ProxyUsers),
+		kInbounds:  inbounds,
+		kOutbounds: outbounds,
 	}
 	global.RouteFinal = resolveRouteFinal(outbounds)
 	applyGlobalTemplate(doc, global, ctx.Rules)
 	return doc, nil
-}
-
-// buildV2RayAPI 渲染 experimental.v2ray_api 节点（§3.2）：启用入站/出站 tag
-// 与活跃用户 name（= proxy_user DB UUID），供 edge-agent gRPC 采集流量。
-func buildV2RayAPI(inbounds []model.Inbound, outbounds []model.Outbound, users []renderer.ProxyUser) map[string]any {
-	inboundTags := make([]string, 0, len(inbounds))
-	for _, c := range inbounds {
-		if c.Name != "" {
-			inboundTags = append(inboundTags, c.Name)
-		}
-	}
-	outboundTags := make([]string, 0, len(outbounds))
-	for _, c := range outbounds {
-		if c.Name != "" {
-			outboundTags = append(outboundTags, c.Name)
-		}
-	}
-	userNames := make([]string, 0, len(users))
-	for _, u := range users {
-		if u.Name != "" {
-			userNames = append(userNames, u.Name)
-		}
-	}
-	return map[string]any{
-		"v2ray_api": map[string]any{
-			"listen": "127.0.0.1:9001",
-			"stats": map[string]any{
-				"enabled":   true,
-				"inbounds":  inboundTags,
-				"outbounds": outboundTags,
-				"users":     userNames,
-			},
-		},
-	}
 }
 
 // assertUniqueTags 断言 inbounds[] 与 outbounds[] 的 tag 全局唯一。
