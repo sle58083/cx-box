@@ -172,6 +172,9 @@ func (r *VLESSRenderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) (str
 		if sni := str(tls, fServerName); sni != "" {
 			q.Set("sni", sni)
 		}
+		if insecureFromTLS(cfg) {
+			q.Set("insecure", "1")
+		}
 	default:
 		q.Set("security", "none")
 	}
