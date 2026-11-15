@@ -19,7 +19,8 @@ func renderTransport(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if m == nil {
+	if m == nil || len(m) == 0 {
+		// 空对象 {} 等同于未配置（API 客户端常把空字段发成 {}），不输出 transport。
 		return nil, nil
 	}
 	// 传输层必须声明 type，否则 sing-box 无法识别。
