@@ -92,10 +92,14 @@ func portStr(m map[string]any, key string) string {
 }
 
 // renderInboundCommon 填充 type/tag/listen/listen_port。
+// listen 为空时不下发该键：sing-box 对 "listen": "" 会 ParseAddr 失败，
+// 缺省即监听全部地址，正合单机面板语义（P4 实测踩到）。
 func renderInboundCommon(out map[string]any, cfg model.Inbound) {
 	out[fType] = cfg.Type
 	out[fTag] = cfg.Name
-	out[fListen] = cfg.Listen
+	if cfg.Listen != "" {
+		out[fListen] = cfg.Listen
+	}
 	out[fListenPort] = cfg.Port
 }
 
