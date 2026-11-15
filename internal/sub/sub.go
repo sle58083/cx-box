@@ -74,6 +74,9 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 			if sni := g.certSNI(*in.CertID); sni != "" {
 				ob.TLS = fillSNI(ob.TLS, sni)
 			}
+		} else if sni := g.autoCertSNI(); sni != "" {
+			// 未绑证书的 TLS 入站由面板自动证书兜底，同样补上其域名作 SNI。
+			ob.TLS = fillSNI(ob.TLS, sni)
 		}
 		uri, err := r.SubscriptionURI(ob, user)
 		if err != nil {
@@ -182,8 +185,22 @@ func (g *Generator) certSNI(certID string) string {
 	if err := g.db.First(&cert, "id = ?", certID).Error; err != nil {
 		return ""
 	}
+	return firstDomain(cert.Domains)
+}
+
+// autoCertSNI 返回面板自动证书的首选 SNI 域名（自动证书尚不存在时返回空）。
+func (g *Generator) autoCertSNI() string {
+	var cert model.Certificate
+	if err := g.db.First(&cert, "name = ?", service.AutoCertName).Error; err != nil {
+		return ""
+	}
+	return firstDomain(cert.Domains)
+}
+
+// firstDomain 从证书 Domains（JSON []string）里取首选域名：第一个 DNS 名优先。
+func firstDomain(domainsJSON string) string {
 	var domains []string
-	if err := json.Unmarshal([]byte(cert.Domains), &domains); err != nil || len(domains) == 0 {
+	if err := json.Unmarshal([]byte(domainsJSON), &domains); err != nil || len(domains) == 0 {
 		return ""
 	}
 	for _, d := range domains {
