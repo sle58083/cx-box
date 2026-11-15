@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # cx-box 管理脚本（安装到 /usr/bin/cx-box）—— 对标 Teminuosi/s-ui 的 s-ui.sh。
-# 只调用 cx-box 已实现的 CLI：sui run/uri/setting/admin/token/migrate。
+# 只调用 cx-box 已实现的 CLI：cx-box run/uri/setting/admin/token/migrate。
 # 尚未实现的面板能力（如 SSL 证书申请）不在菜单里假装可用，留待后续阶段。
 
 red='\033[0;31m'
@@ -11,7 +11,7 @@ plain='\033[0m'
 
 INSTALL_URL="https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh"
 INSTALL_DIR="/usr/local/cx-box"
-BIN="${INSTALL_DIR}/sui"
+BIN="${INSTALL_DIR}/cx-box"
 SERVICE_NAME="cx-box"
 
 function LOGD() { echo -e "${yellow}[DEG] $* ${plain}"; }
