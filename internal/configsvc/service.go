@@ -3,10 +3,13 @@ package configsvc
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -58,13 +61,47 @@ func (s *Service) Generate(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 
+	secret, err := s.EnsureAPISecret(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	return s.generator.Generate(&NodeConfigContext{
 		Global:     DefaultGlobalSettings(),
 		Inbounds:   inbounds,
 		Outbounds:  outbounds,
 		Rules:      rules,
 		ProxyUsers: users,
+		APISecret:  secret,
 	})
+}
+
+// EnsureAPISecret 返回 sing-box api service 的密钥；设置行里没有时生成并落库。
+// 采集器（internal/traffic）与生成器共用这一份，保证配置与采集端一致。
+func (s *Service) EnsureAPISecret(ctx context.Context) (string, error) {
+	var st model.Setting
+	if err := s.db.WithContext(ctx).First(&st).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			return "", fmt.Errorf("configsvc: 读取设置失败: %w", err)
+		}
+		st = model.Setting{PanelPort: 2095, PanelPath: "/app/", SubPort: 2096, SubPath: "/sub/"}
+		if err := s.db.WithContext(ctx).Create(&st).Error; err != nil {
+			return "", fmt.Errorf("configsvc: 创建默认设置失败: %w", err)
+		}
+	}
+	if st.APISecret != "" {
+		return st.APISecret, nil
+	}
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("configsvc: 生成 api 密钥失败: %w", err)
+	}
+	secret := hex.EncodeToString(buf)
+	if err := s.db.WithContext(ctx).Model(&model.Setting{}).Where("id = ?", st.ID).
+		Update("api_secret", secret).Error; err != nil {
+		return "", fmt.Errorf("configsvc: 保存 api 密钥失败: %w", err)
+	}
+	return secret, nil
 }
 
 // Apply 生成配置 → 写盘 → 校验 → 重启 sing-box。
@@ -129,14 +166,24 @@ func (s *Service) resolveCertBindings(ctx context.Context, inbounds []model.Inbo
 	return nil
 }
 
-// activeUsers 返回启用状态的客户端（转为 renderer.ProxyUser）。
+// activeUsers 返回可下发到 sing-box 的客户端（转为 renderer.ProxyUser）。
+// 过滤：未启用、已到期、已用完流量配额的客户端不注入内核配置——到期/超额
+// 即断网，订阅侧也会拒绝（见 internal/sub）。采集器落库后若发现超额会触发
+// 重新 Apply，让剔除及时生效。
 func (s *Service) activeUsers(ctx context.Context) ([]renderer.ProxyUser, error) {
 	var clients []model.Client
 	if err := s.db.WithContext(ctx).Where("enable = ?", true).Find(&clients).Error; err != nil {
 		return nil, fmt.Errorf("configsvc: 读取客户端失败: %w", err)
 	}
+	now := time.Now().Unix()
 	users := make([]renderer.ProxyUser, 0, len(clients))
 	for _, c := range clients {
+		if c.ExpiryTime > 0 && c.ExpiryTime <= now {
+			continue
+		}
+		if c.TotalGB > 0 && c.UsedBytes >= c.TotalGB*1024*1024*1024 {
+			continue
+		}
 		users = append(users, renderer.ProxyUser{
 			ID:       c.ID.String(),
 			Name:     c.ID.String(),
