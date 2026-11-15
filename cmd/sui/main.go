@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/sle58083/cx-box/internal/db"
+	"github.com/sle58083/cx-box/internal/service"
 )
 
 func main() {
@@ -49,7 +50,7 @@ func main() {
 	}
 }
 
-// openDB 打开数据库并迁移。
+// openDB 打开数据库并迁移；首次运行时自动创建默认管理员 admin/admin。
 func openDB() *gorm.DB {
 	g, err := db.Open("")
 	if err != nil {
@@ -57,6 +58,10 @@ func openDB() *gorm.DB {
 		os.Exit(1)
 	}
 	if err := db.Migrate(g); err != nil {
+		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
+		os.Exit(1)
+	}
+	if err := service.NewAdminService(g).EnsureDefault(); err != nil {
 		fmt.Fprintf(os.Stderr, "错误: %v\n", err)
 		os.Exit(1)
 	}
