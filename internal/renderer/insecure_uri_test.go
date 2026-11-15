@@ -28,6 +28,8 @@ func TestSubscriptionURIInsecure(t *testing.T) {
 		{"anytls", `{"server":"h","server_port":9443}`, ProxyUser{Password: "pw"}, "insecure=1"},
 		{"hysteria2", `{"server":"h","server_port":36712}`, ProxyUser{Password: "pw"}, "insecure=1"},
 		{"tuic", `{"server":"h","server_port":10443,"password":"pw"}`, ProxyUser{UUID: "11111111-2222-3333-4444-555555555555"}, "allow_insecure=1"},
+		{"tuic", `{"server":"h","server_port":10443,"password":"pw"}`, ProxyUser{UUID: "11111111-2222-3333-4444-555555555555"}, "alpn=h3"},
+		{"trojan", `{"server":"h","server_port":4443}`, ProxyUser{Password: "pw"}, "allowInsecure=1"},
 		{"vless", `{"server":"h","server_port":443,"flow":""}`, ProxyUser{UUID: "11111111-2222-3333-4444-555555555555"}, "insecure=1"},
 	}
 	for _, c := range cases {
