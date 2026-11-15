@@ -189,6 +189,9 @@ func (r *AnyTLSRenderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) (st
 	if sni := sniFromTLS(cfg); sni != "" {
 		q.Set("sni", sni)
 	}
+	if insecureFromTLS(cfg) {
+		q.Set("insecure", "1")
+	}
 	raw := fmt.Sprintf("anytls://%s@%s:%s", encoded, server, port)
 	if e := q.Encode(); e != "" {
 		raw += "?" + e
