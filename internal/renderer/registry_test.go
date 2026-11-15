@@ -5,7 +5,7 @@ import (
 )
 
 func TestRegistryDispatch(t *testing.T) {
-	for _, proto := range []string{"vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls", "direct", "block", "selector", "urltest"} {
+	for _, proto := range []string{"vless", "vmess", "trojan", "shadowsocks", "hysteria2", "tuic", "anytls", "socks", "http", "direct", "block", "selector", "urltest"} {
 		if _, ok := Get(proto); !ok {
 			t.Fatalf("协议 %q 未注册", proto)
 		}
