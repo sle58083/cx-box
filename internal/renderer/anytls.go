@@ -115,9 +115,8 @@ func (r *AnyTLSRenderer) ValidateInbound(cfg model.Inbound) error {
 	if realityEnabled(m) || echEnabled(m) {
 		return fmt.Errorf("anytls inbound: 不支持 Reality/ECH")
 	}
-	if cfg.CertID == nil && (str(m, "certificate_path") == "" || str(m, "key_path") == "") {
-		return fmt.Errorf("anytls inbound: 缺少 certificate_path/key_path（或绑定 cert_id）")
-	}
+	// 证书不再强制：未绑定 cert_id 且未写 certificate_path/key_path 时，
+	// configsvc 在应用配置时会自动生成自签证书并注入路径（一键创建语义）。
 
 	settings, err := parseMap(cfg.Settings)
 	if err != nil {
