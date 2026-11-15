@@ -33,6 +33,15 @@ const (
 func base64Encode(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 
 // parseMap 解析 JSONB 为 map；nil / 空 / "null" 一律返回空 map。
+// passthrough 把 settings 中存在的键原样拷入 out（带宽、混淆等协议专属字段）。
+func passthrough(out, settings map[string]any, keys ...string) {
+	for _, k := range keys {
+		if v, ok := settings[k]; ok && v != nil {
+			out[k] = v
+		}
+	}
+}
+
 func parseMap(raw json.RawMessage) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return map[string]any{}, nil
