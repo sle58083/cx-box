@@ -3,6 +3,9 @@
 /cx-box
 *.exe
 
+# Release packages (scripts/build-release.sh)
+/dist/
+
 # Database
 *.db
 *.db-shm
