@@ -262,6 +262,8 @@ async function loadStatus(){
       ["内核就绪", d.kernel_ready ? "是" : "否（启动时下载/校验失败）"],
       ["面板地址", ":" + d.panel_port + esc(d.panel_path)],
       ["订阅地址", ":" + d.sub_port + esc(d.sub_path)],
+      ["累计上行", fmtBytes(d.traffic_up || 0)],
+      ["累计下行", fmtBytes(d.traffic_down || 0)],
     ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
   }catch(e){ toast(e.message); }
 }
