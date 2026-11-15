@@ -280,9 +280,10 @@ function openModal(html){ $("modalBox").innerHTML = html; $("modalWrap").classLi
 function closeModal(){ $("modalWrap").classList.add("hidden"); $("modalBox").innerHTML = ""; }
 $("modalWrap").addEventListener("click", (e)=>{ if (e.target === $("modalWrap")) closeModal(); });
 function modalActions(){ return `<div class="actions"><button type="button" onclick="closeModal()">取消</button><button class="primary" type="submit">保存</button></div>`; }
-function jsonField(label, id, val){
+function jsonField(label, id, val, hint){
   const s = val ? JSON.stringify(val, null, 2) : "";
-  return `<label>${label}（JSON，可留空）</label><textarea id="${id}" spellcheck="false">${esc(s)}</textarea>`;
+  return `<label>${label}（JSON，可留空）</label><textarea id="${id}" spellcheck="false">${esc(s)}</textarea>` +
+    (hint ? `<p class="small" style="margin:4px 0 2px">${hint}</p>` : "");
 }
 function parseJSONField(id){
   const s = $(id).value.trim(); if (!s) return undefined;
@@ -294,7 +295,14 @@ function fillJSONField(id, raw){
 }
 async function applyInboundDefaults(type){
   const d = (protocolDefaults[type] || {}).inbound; if (!d) return;
-  if (d.port) $("inPort").value = d.port;
+  if (d.port){
+    // 默认端口已被已有入站占用时自动顺延（后端保存时也会再避让一次）。
+    let p = d.port;
+    if (!inboundCache.length) { try{ inboundCache = await api("inbounds"); }catch(e){} }
+    const used = new Set(inboundCache.map(x=>x.port));
+    while (used.has(p) && p < 65535) p++;
+    $("inPort").value = p;
+  }
   fillJSONField("inSettings", d.settings);
   fillJSONField("inTLS", d.tls);
   fillJSONField("inTransport", d.transport);
@@ -320,7 +328,21 @@ function protoOptions(dir, selected){
     .map(p=>`<option value="${esc(p.protocol)}" ${p.protocol===selected?"selected":""}>${esc(p.protocol)}</option>`).join("");
 }
 function statusOptions(selected){
-  return ["enabled","disabled"].map(s=>`<option ${s===selected?"selected":""}>${s}</option>`).join("");
+  return [["enabled","启用"],["disabled","禁用"]].map(([v,t])=>`<option value="${v}" ${v===selected?"selected":""}>${t}</option>`).join("");
+}
+async function copyText(text){
+  // 安全上下文（HTTPS/localhost）优先用 Clipboard API；面板多为 HTTP 访问，
+  // 此时 clipboard 不可用，退回 textarea + execCommand 的兼容复制法。
+  if (navigator.clipboard && window.isSecureContext){
+    try{ await navigator.clipboard.writeText(text); toast("已复制到剪贴板"); return; }catch(e){}
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  let okCopy = false;
+  try{ okCopy = document.execCommand("copy"); }catch(e){}
+  ta.remove();
+  toast(okCopy ? "已复制到剪贴板" : "自动复制失败，请手动选中文本复制");
 }
 
 /* ---------- 入站 ---------- */
@@ -349,12 +371,13 @@ async function inboundForm(i){ await ensureCerts();
     <div class="row"><div><label>端口</label><input id="inPort" type="number" min="1" max="65535" value="${i.port}" required></div>
     <div><label>监听地址（留空=全部）</label><input id="inListen" value="${esc(i.listen||"")}"></div></div>
     <label>状态</label><select id="inStatus">${statusOptions(i.status)}</select>
-    <label>绑定证书（可选；绑定后 TLS 框只需 enabled/server_name，证书路径自动注入）</label><select id="inCert">${certOptions(i.cert_id)}</select>
+    <label>绑定证书（可选）</label><select id="inCert">${certOptions(i.cert_id)}</select>
+    <p class="small" style="margin:4px 0 2px">证书是给 TLS 加密用的。trojan / hysteria2 / tuic / anytls 必须有证书：<b>不绑定也能直接保存并应用</b>，面板会自动生成一张自签证书顶上（在「证书」页能看到，客户端连接时需开启「允许不安全」）；绑定你自己的正式证书则免去这一步，证书路径会自动注入下面的 TLS 配置。</p>
     <div class="check"><input type="checkbox" id="inUser" ${i.is_user_inbound?"checked":""}><span>用户入口（自动注入客户端用户）</span></div>
-    ${jsonField("Settings", "inSettings", i.settings)}
-    ${jsonField("TLS / Reality", "inTLS", i.tls)}
+    ${jsonField("协议参数 Settings", "inSettings", i.settings, "协议自身的参数（流控、带宽、混淆密码等）。新建时已按所选协议自动填好默认值，一般无需修改。")}
+    ${jsonField("TLS / Reality 加密配置", "inTLS", i.tls, "加密层配置。vless 的 Reality 私钥在新建时自动生成；普通 TLS 协议不绑证书时，应用配置会自动补自签证书路径，这里只需保留 enabled 与 server_name。")}
     <p class="small" id="inRealityHint"></p>
-    ${jsonField("Transport", "inTransport", i.transport)}
+    ${jsonField("传输层 Transport", "inTransport", i.transport, "ws / grpc 等传输方式的参数；普通 TCP 直连留空即可。")}
     ${modalActions()}
   </form>`);
   if (!i.id){
@@ -399,9 +422,9 @@ function outboundForm(o){
     <div class="row"><div><label>名称（tag）</label><input id="outName" value="${esc(o.name)}" required></div>
     <div><label>协议</label><select id="outType">${protoOptions("outbound", o.type)}</select></div></div>
     <label>状态</label><select id="outStatus">${statusOptions(o.status)}</select>
-    ${jsonField("Settings", "outSettings", o.settings)}
-    ${jsonField("TLS / Reality", "outTLS", o.tls)}
-    ${jsonField("Transport", "outTransport", o.transport)}
+    ${jsonField("协议参数 Settings", "outSettings", o.settings, "出站协议的参数（服务器地址、端口、UUID/密码等）。新建时已按所选协议预填模板，把服务器信息补齐即可。")}
+    ${jsonField("TLS / Reality 加密配置", "outTLS", o.tls)}
+    ${jsonField("传输层 Transport", "outTransport", o.transport)}
     ${modalActions()}
   </form>`);
   if (!o.id){
@@ -446,14 +469,44 @@ async function loadClients(){
       <td>${c.enable?"启用":"禁用"}</td>
       <td>${fmtBytes(c.used_bytes)} / ${c.total_gb? c.total_gb+" GB":"无限"}</td>
       <td>${fmtExpiry(c.expiry_time)}</td>
-      <td class="mono">${esc(subURL(c))}</td>
-      <td style="white-space:nowrap"><button onclick="copySub('${c.id}')">复制订阅</button> <button onclick="editClient('${c.id}')">编辑</button> <button class="danger" onclick="delClient('${c.id}')">删除</button></td></tr>`).join("");
-    $("clientTable").innerHTML = `<table><tr><th>邮箱</th><th>状态</th><th>已用 / 上限</th><th>到期</th><th>订阅地址</th><th>操作</th></tr>${rows || '<tr><td colspan="6" class="small">暂无客户端</td></tr>'}</table>`;
+      <td style="white-space:nowrap"><button class="primary" onclick="exportSub('${c.id}')">导出订阅</button> <button onclick="copySub('${c.id}')">复制</button> <button onclick="editClient('${c.id}')">编辑</button> <button class="danger" onclick="delClient('${c.id}')">删除</button></td></tr>`).join("");
+    $("clientTable").innerHTML = `<table><tr><th>邮箱</th><th>状态</th><th>已用 / 上限</th><th>到期</th><th>操作</th></tr>${rows || '<tr><td colspan="5" class="small">暂无客户端</td></tr>'}</table>`;
   }catch(e){ toast(e.message); }
 }
 window.copySub = (id)=>{
   const c = clientCache.find(x=>x.id===id); if (!c) return;
-  navigator.clipboard?.writeText(subURL(c)).then(()=>toast("订阅地址已复制"), ()=>toast(subURL(c)));
+  copyText(subURL(c));
+};
+window.exportSub = async (id)=>{
+  const c = clientCache.find(x=>x.id===id); if (!c) return;
+  if (!statusData) await loadStatus();
+  const url = subURL(c);
+  openModal(`<h3>导出订阅 · ${esc(c.email)}</h3>
+  <label>订阅地址</label>
+  <input id="subExportURL" readonly value="${esc(url)}" onclick="this.select()">
+  <p class="small">把这个地址导入客户端 App（sing-box / v2rayNG / Shadowrocket 等）即可自动拉取该客户端的全部节点。地址含专属凭据，请勿外传；使用自动证书的节点，客户端需开启「允许不安全」。</p>
+  <div style="text-align:center;margin:14px 0 4px"><img id="subExportQR" alt="订阅二维码" width="200" height="200"></div>
+  <p class="small" style="text-align:center;margin:0 0 6px">用客户端 App 扫码导入</p>
+  <div class="actions"><button type="button" onclick="closeModal()">关闭</button>
+  <button type="button" id="subDlBtn">下载订阅地址</button>
+  <button class="primary" type="button" id="subCopyBtn">复制订阅地址</button></div>`);
+  $("subCopyBtn").addEventListener("click", ()=>copyText(url));
+  $("subDlBtn").addEventListener("click", ()=>{
+    const blob = new Blob([url + "\n"], {type:"text/plain;charset=utf-8"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (c.email || "client").replace(/[\\/:*?"<>|]/g, "_") + "-订阅地址.txt";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+    toast("订阅地址已下载");
+  });
+  try{
+    const res = await fetch("api/tools/qrcode?text=" + encodeURIComponent(url),
+      {headers: token ? {"Authorization":"Bearer " + token} : {}});
+    if (!res.ok) throw new Error("qr");
+    const blob = await res.blob();
+    $("subExportQR").src = URL.createObjectURL(blob);
+  }catch(e){ const img = $("subExportQR"); if (img) img.alt = "二维码生成失败，可直接复制地址"; }
 };
 function clientForm(c){
   c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, uuid:"", sub_id:""};
@@ -553,7 +606,7 @@ async function loadCerts(){
     const rows = certCache.map(ct=>`<tr>
       <td><b>${esc(ct.name)}</b></td><td>${ct.type==="self_signed"?"自签":"导入"}</td>
       <td>${esc(certDomains(ct))}</td><td>${fmtDate(ct.not_after)}</td>
-      <td>${ct.status==="valid"?"有效":esc(ct.status)}</td>
+      <td>${ct.status==="valid"?"有效":ct.status==="expired"?"已过期":ct.status==="invalid"?"无效":esc(ct.status)}</td>
       <td><button class="danger" onclick="delCert('${ct.id}')">删除</button></td></tr>`).join("");
     $("certTable").innerHTML = `<table><tr><th>名称</th><th>类型</th><th>域名 / IP</th><th>到期</th><th>状态</th><th>操作</th></tr>${rows || '<tr><td colspan="6" class="small">暂无证书</td></tr>'}</table>`;
   }catch(e){ toast(e.message); }
