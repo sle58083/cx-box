@@ -3,6 +3,7 @@ package renderer
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/sle58083/cx-box/internal/model"
@@ -145,6 +146,31 @@ func (r *TUICRenderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) (stri
 	if insecureFromTLS(cfg) {
 		q.Set("allow_insecure", "1")
 	}
+	if cc := str(settings, "congestion_control"); cc != "" {
+		q.Set("congestion_control", cc)
+	}
+	if mode := str(settings, "udp_relay_mode"); mode != "" {
+		q.Set("udp_relay_mode", mode)
+	}
+	// ALPN 必须下发：入站 TLS 配了 alpn（默认模板为 h3）时，客户端若不带
+	// ALPN 协商必然失败（实测 sing-box 服务端报 tls: no application
+	// protocol，v2rayN 测速 -1）。TLS 没写 alpn 时按 TUIC 惯例补 h3。
+	alpn := ""
+	if tls, err := parseMap(cfg.TLS); err == nil {
+		if list, ok := tls["alpn"].([]any); ok {
+			parts := make([]string, 0, len(list))
+			for _, v := range list {
+				if s, ok := v.(string); ok && s != "" {
+					parts = append(parts, s)
+				}
+			}
+			alpn = strings.Join(parts, ",")
+		}
+	}
+	if alpn == "" {
+		alpn = "h3"
+	}
+	q.Set("alpn", alpn)
 	return fmt.Sprintf("tuic://%s:%s@%s:%s?%s#%s", user.UUID, url.PathEscape(pwd), server, port, q.Encode(), cfg.Name), nil
 }
 
