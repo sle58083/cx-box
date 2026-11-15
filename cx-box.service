@@ -6,7 +6,7 @@ Wants=network.target
 [Service]
 Type=simple
 WorkingDirectory=/usr/local/cx-box/
-ExecStart=/usr/local/cx-box/sui
+ExecStart=/usr/local/cx-box/cx-box
 Restart=on-failure
 RestartSec=10s
 
