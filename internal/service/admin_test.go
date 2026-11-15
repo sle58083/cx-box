@@ -41,7 +41,7 @@ func TestEnsureDefaultCreatesAdminOnce(t *testing.T) {
 	}
 }
 
-// 安装脚本的 `sui admin -username X -password Y` 必须改名到唯一的管理员行上：
+// 安装脚本的 `cx-box admin -username X -password Y` 必须改名到唯一的管理员行上：
 // 改名后表里仍只能有一行，且 -show（Get）看到的是新用户名。
 func TestSetCredentialsRenamesSingleAdmin(t *testing.T) {
 	g := newAdminTestDB(t)
