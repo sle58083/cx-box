@@ -113,7 +113,7 @@ func (r *SocksRenderer) Meta() ProtocolMeta {
 		TLSAllowed: []TLSMode{TLSModeNone},
 		Inbound: []FieldSchema{
 			{Key: "users", Label: "账号列表", Type: "array", Required: false,
-				Help: "每项 {username, password}；留空表示无认证（任何人可连，仅建议内网使用）"},
+				Help: "新建时自动随机生成（每行可点「随机」更换）；全部删空表示无认证（任何人可连，仅建议内网使用）"},
 		},
 		Outbound: []FieldSchema{
 			{Key: "server", Label: "代理地址", Type: "text", Required: true},
