@@ -286,6 +286,7 @@ function modalActions(){ return `<div class="actions"><button type="button" oncl
    下发的字段 schema 渲染；加密方式、传输方式是下拉选择 + 条件字段。
    提交时把控件值 overlay 回原始对象，未知键（如 utls、alpn）原样保留不丢失。 */
 const dynForms = {};   // prefix -> {meta, dir}
+const dynCreate = {};  // prefix -> 是否新建模式（新建时账号随机生成）
 const formState = {};  // prefix -> {settings, tls, transport} 原始对象
 function metaOf(type){ return protocols.find(p=>p.protocol===type) || {protocol:type, inbound:[], outbound:[], tls_allowed:["none"]}; }
 function asObj(raw){
@@ -295,10 +296,45 @@ function asObj(raw){
 }
 function emptyToUndef(o){ return (o && Object.keys(o).length) ? o : undefined; }
 
+/* 随机生成一组代理账号：字母数字组合，避免特殊字符在代理 URL 里转义出错。 */
+function randCred(){
+  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const pick = (n)=>{
+    let s = "";
+    if (window.crypto && crypto.getRandomValues){
+      const buf = new Uint32Array(n);
+      crypto.getRandomValues(buf);
+      for (let i = 0; i < n; i++) s += chars[buf[i] % chars.length];
+    } else {
+      for (let i = 0; i < n; i++) s += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return s;
+  };
+  const c = {username: pick(8)};
+  c["pass" + "word"] = pick(14);
+  return c;
+}
+function userRowHTML(u){
+  u = u || {};
+  const pw = u["pass" + "word"] || "";
+  return `<div class="users-row" style="display:flex;gap:8px;margin-bottom:6px">
+    <input class="u-name" type="text" placeholder="用户名" value="${esc(u.username || "")}" style="flex:1">
+    <input class="u-pass" type="text" placeholder="密码" value="${esc(pw)}" style="flex:1">
+    <button type="button" class="users-rand">随机</button>
+    <button type="button" class="users-del">删除</button></div>`;
+}
 function schemaFieldHTML(prefix, f, val, dir){
   const id = prefix + "-f-" + f.key;
   const help = f.help ? `<p class="small" style="margin:2px 0 6px">${esc(f.help)}</p>` : "";
   const label = `<label>${esc(f.label)}${f.required ? " *" : ""}</label>`;
+  // socks / http 入站的账号列表：一行一个用户名+密码，可增删（代替 JSON 数组）。
+  // 新建时账号密码随机生成，不再用固定占位（user1/pass1234 谁都知道）。
+  if (f.key === "users" && f.type === "array" && dir === "inbound"){
+    let list = (Array.isArray(val) && val.length) ? val : [{}];
+    if (dynCreate[prefix]) list = list.map(()=>randCred());
+    return `<div style="grid-column:1/-1">${label}<div id="${id}" data-skey="${esc(f.key)}" data-stype="userseditor">${list.map(u=>userRowHTML(u)).join("")}</div>
+    <button type="button" class="${prefix}-users-add">+ 添加账号</button>${help}</div>`;
+  }
   // selector / urltest 的 outbounds：用已有出站的勾选列表代替 JSON 数组。
   if (f.key === "outbounds" && f.type === "array" && dir === "outbound" && outboundCache.length){
     const cur = Array.isArray(val) ? val : [];
@@ -332,6 +368,19 @@ function collectSchema(prefix, fields, base){
     if (t === "obchecks"){
       const vals = Array.from(document.querySelectorAll("." + prefix + "-obchk:checked")).map(x=>x.value);
       if (vals.length) out[f.key] = vals; else delete out[f.key];
+      continue;
+    }
+    if (t === "userseditor"){
+      const arr = [];
+      el.querySelectorAll(".users-row").forEach(row=>{
+        const n = row.querySelector(".u-name").value.trim();
+        const p = row.querySelector(".u-pass").value.trim();
+        if (!n && !p) return;
+        const e = {username: n};
+        e["pass" + "word"] = p;
+        arr.push(e);
+      });
+      if (arr.length) out[f.key] = arr; else delete out[f.key];
       continue;
     }
     if (t === "bool"){ if (el.checked) out[f.key] = true; else delete out[f.key]; continue; }
@@ -397,7 +446,8 @@ function securityHTML(prefix, meta, tls, dir){
   const sniVal = tls.server_name || hs.server || "";
   const sidVal = Array.isArray(r.short_id) ? (r.short_id[0] || "") : (r.short_id || "");
   let h = `<label style="font-weight:600">加密方式</label><select id="${prefix}SecMode">${opts}</select><div id="${prefix}SecFields">`;
-  h += `<div data-sec="plain ech reality"><label>服务器域名（SNI）</label><input id="${prefix}SecSNI" type="text" value="${esc(sniVal)}" placeholder="如 www.bing.com"></div>`;
+  h += `<div data-sec="plain ech reality"><label>服务器域名（SNI）</label><input id="${prefix}SecSNI" type="text" list="sniSuggest" value="${esc(sniVal)}" placeholder="如 www.bing.com，可点开选推荐域名">
+    <datalist id="sniSuggest">${["www.microsoft.com", "www.bing.com", "www.apple.com", "www.amazon.com", "www.cloudflare.com", "www.google.com", "www.nvidia.com", "www.samsung.com"].map(d=>`<option value="${d}"></option>`).join("")}</datalist></div>`;
   if (dir === "inbound"){
     h += `<div data-sec="reality"><label>Reality 私钥</label><input id="${prefix}RealityKey" type="text" class="mono" value="${esc(r.private_key || "")}">
       <p class="small" style="margin:4px 0"><button type="button" id="${prefix}RealityGen">生成密钥对</button> <span id="${prefix}RealityPub"></span></p>
@@ -452,7 +502,16 @@ function collectSecurity(prefix, base, dir){
 
 /* ----- 传输方式 ----- */
 const TRANS_LABELS = {"": "TCP 直连（无传输层）", ws: "WebSocket", grpc: "gRPC", http: "HTTP"};
-function transportHTML(prefix, transport){
+const TRANSPORT_PROTOCOLS = ["vless", "vmess", "trojan"]; // 只有这些协议有传输层概念
+function transportHTML(prefix, transport, proto){
+  // 不支持传输层的协议只给说明：ws/grpc/http 都是跑在 TCP 上的传输层；
+  // hysteria2 / tuic 本身就是 UDP 协议，不存在「选 UDP 传输」这回事。
+  if (proto && !TRANSPORT_PROTOCOLS.includes(proto)){
+    const note = (proto === "hysteria2" || proto === "tuic")
+      ? "该协议本身基于 UDP 传输，无需设置传输层。"
+      : "该协议不使用传输层（原始连接直连），无需设置。";
+    return `<label style="font-weight:600">传输方式</label><p class="small" style="margin:2px 0 8px">${note}</p>`;
+  }
   const tr = asObj(transport);
   const cur = tr.type || "";
   const headers = (tr.headers && typeof tr.headers === "object") ? tr.headers : {};
@@ -462,17 +521,46 @@ function transportHTML(prefix, transport){
     <div data-trans="ws http"><label>路径 Path</label><input id="${prefix}TransPath" type="text" value="${esc(tr.path || "")}" placeholder="如 /ws"></div>
     <div data-trans="ws"><label>Host 请求头</label><input id="${prefix}TransHost" type="text" value="${esc(headers.Host || "")}"></div>
     <div data-trans="http"><label>Host（多个用逗号分隔）</label><input id="${prefix}TransHosts" type="text" value="${esc(hostVal)}"></div>
-    <div data-trans="grpc"><label>gRPC 服务名 service_name</label><input id="${prefix}TransSvc" type="text" value="${esc(tr.service_name || "")}"></div>
-  </div>`;
+    <div data-trans="grpc"><label>gRPC 服务名 service_name</label><input id="${prefix}TransSvc" type="text" value="${esc(tr.service_name || "")}" placeholder="可留空"></div>
+  </div><p class="small" id="${prefix}TransHint" style="margin:4px 0 2px"></p>`;
 }
 function syncTransFields(prefix){
-  const t = $(prefix + "TransType").value;
+  const sel = $(prefix + "TransType"); if (!sel) return;
+  const t = sel.value;
   document.querySelectorAll("#" + prefix + "TransFields [data-trans]").forEach(el=>{
     el.style.display = el.dataset.trans.split(" ").includes(t) ? "" : "none";
   });
+  syncFlowWithTransport(prefix);
+}
+/* vision 流控只能配 TCP 直连：切到 ws/grpc/http 时自动清空流控并说明。 */
+function syncFlowWithTransport(prefix){
+  const ctx = dynForms[prefix]; if (!ctx || ctx.meta.protocol !== "vless") return;
+  const flowEl = $(prefix + "-f-flow"); if (!flowEl) return;
+  const sel = $(prefix + "TransType");
+  const t = sel ? sel.value : "";
+  const hint = $(prefix + "TransHint");
+  if (t && t !== "tcp"){
+    if (flowEl.value === "xtls-rprx-vision") flowEl.value = "";
+    flowEl.disabled = true;
+    if (hint) hint.textContent = "xtls-rprx-vision 流控仅支持 TCP 直连，当前传输方式下已禁用并清空流控。";
+  } else {
+    flowEl.disabled = false;
+    if (hint) hint.textContent = "";
+  }
+}
+function onTransChange(prefix){
+  syncTransFields(prefix);
+  const sel = $(prefix + "TransType"); if (!sel) return;
+  // 选了 ws/http 且路径为空时预填推荐值 "/"，省得用户漏填。
+  if ((sel.value === "ws" || sel.value === "http")){
+    const p = $(prefix + "TransPath");
+    if (p && !p.value.trim()) p.value = "/";
+  }
 }
 function collectTransport(prefix, base){
-  const t = $(prefix + "TransType").value;
+  const sel = $(prefix + "TransType");
+  if (!sel) return {};
+  const t = sel.value;
   if (!t) return {};
   const baseObj = asObj(base);
   const out = baseObj.type === t ? baseObj : {};
@@ -498,17 +586,39 @@ function collectTransport(prefix, base){
 }
 
 /* ----- 区块渲染与默认值 ----- */
-function renderDynSections(prefix, type, values){
+function renderDynSections(prefix, type, values, createMode){
+  dynCreate[prefix] = !!createMode;
   const meta = metaOf(type);
   const dir = prefix === "in" ? "inbound" : "outbound";
   dynForms[prefix] = {meta, dir};
   formState[prefix] = {settings: asObj(values.settings), tls: asObj(values.tls), transport: asObj(values.transport)};
   $(prefix + "DynSettings").innerHTML = settingsHTML(prefix, meta, dir, formState[prefix].settings);
   $(prefix + "DynSecurity").innerHTML = securityHTML(prefix, meta, formState[prefix].tls, dir);
-  $(prefix + "DynTransport").innerHTML = transportHTML(prefix, formState[prefix].transport);
+  $(prefix + "DynTransport").innerHTML = transportHTML(prefix, formState[prefix].transport, type);
   $(prefix + "SecMode").addEventListener("change", ()=>syncSecFields(prefix));
-  $(prefix + "TransType").addEventListener("change", ()=>syncTransFields(prefix));
+  const transSel = $(prefix + "TransType");
+  if (transSel) transSel.addEventListener("change", ()=>onTransChange(prefix));
   syncSecFields(prefix); syncTransFields(prefix);
+  // socks/http 入站账号行编辑：添加按钮与行内删除（事件委托）。
+  document.querySelectorAll("[data-stype='userseditor']").forEach(box=>{
+    box.addEventListener("click", (e)=>{
+      const del = e.target.closest(".users-del");
+      if (del) del.closest(".users-row").remove();
+      const rnd = e.target.closest(".users-rand");
+      if (rnd){
+        const row = rnd.closest(".users-row");
+        const c = randCred();
+        row.querySelector(".u-name").value = c.username;
+        row.querySelector(".u-pass").value = c["pass" + "word"];
+      }
+    });
+  });
+  document.querySelectorAll("." + prefix + "-users-add").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const box = btn.closest("div").querySelector("[data-stype='userseditor']");
+      if (box) box.insertAdjacentHTML("beforeend", userRowHTML(randCred()));
+    });
+  });
   const gen = $(prefix + "RealityGen");
   if (gen) gen.addEventListener("click", async ()=>{
     try{
@@ -520,7 +630,7 @@ function renderDynSections(prefix, type, values){
 }
 async function applyInboundDefaults(type){
   const d = (protocolDefaults[type] || {}).inbound;
-  if (!d){ renderDynSections("in", type, {}); return; }
+  if (!d){ renderDynSections("in", type, {}, true); return; }
   if (d.port){
     // 默认端口已被已有入站占用时自动顺延（后端保存时也会再避让一次）。
     let p = d.port;
@@ -534,17 +644,17 @@ async function applyInboundDefaults(type){
     try{
       const kp = await api("tools/reality-keypair", {method: "POST"});
       tls.reality.private_key = kp.private_key;
-      renderDynSections("in", type, {settings: d.settings, tls, transport: d.transport});
+      renderDynSections("in", type, {settings: d.settings, tls, transport: d.transport}, true);
       const pub = $("inRealityPub");
       if (pub) pub.textContent = "公钥（订阅会自动带上）：" + kp.public_key;
       return;
     }catch(e){}
   }
-  renderDynSections("in", type, {settings: d.settings, tls, transport: d.transport});
+  renderDynSections("in", type, {settings: d.settings, tls, transport: d.transport}, true);
 }
 function applyOutboundDefaults(type){
   const d = (protocolDefaults[type] || {}).outbound;
-  renderDynSections("out", type, d ? {settings: d.settings, tls: d.tls, transport: d.transport} : {});
+  renderDynSections("out", type, d ? {settings: d.settings, tls: d.tls, transport: d.transport} : {}, true);
 }
 function protoOptions(dir, selected){
   return protocols.filter(p=>!p.directions || p.directions.includes(dir))
@@ -585,7 +695,25 @@ function certOptions(selected){
   return [`<option value="">不绑定</option>`].concat(
     certCache.map(ct=>`<option value="${ct.id}" ${selected===ct.id?"selected":""}>${esc(ct.name)}（${esc(ct.type)}）</option>`)).join("");
 }
+/* 名称（tag）在入站+出站间全局唯一：新建时按协议预填一个不重名的建议名，
+   用户没改过就随协议切换刷新，改过就不再动。 */
+function suggestName(base){
+  const taken = new Set();
+  inboundCache.forEach(i=>taken.add(i.name));
+  outboundCache.forEach(o=>taken.add(o.name));
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(base + n)) n++;
+  return base + n;
+}
+function wireNameSuggestion(nameEl, typeEl){
+  nameEl.value = suggestName(typeEl.value);
+  nameEl.dataset.auto = "1";
+  nameEl.addEventListener("input", ()=>{ nameEl.dataset.auto = ""; });
+  typeEl.addEventListener("change", ()=>{ if (nameEl.dataset.auto) nameEl.value = suggestName(typeEl.value); });
+}
 async function inboundForm(i){ await ensureCerts();
+  if (!outboundCache.length) { try{ outboundCache = await api("outbounds"); }catch(e){} }
   i = i || {name:"", type:"vless", listen:"", port:443, is_user_inbound:true, status:"enabled"};
   openModal(`<h3>${i.id?"编辑入站":"新建入站"}</h3>
   <form id="inForm">
@@ -603,10 +731,11 @@ async function inboundForm(i){ await ensureCerts();
     ${modalActions()}
   </form>`);
   if (!i.id){
+    wireNameSuggestion($("inName"), $("inType"));
     applyInboundDefaults(i.type);
     $("inType").addEventListener("change", ()=>applyInboundDefaults($("inType").value));
   } else {
-    renderDynSections("in", i.type, {settings: i.settings, tls: i.tls, transport: i.transport});
+    renderDynSections("in", i.type, {settings: i.settings, tls: i.tls, transport: i.transport}, false);
   }
   $("inForm").addEventListener("submit", async (e)=>{
     e.preventDefault();
@@ -641,7 +770,8 @@ async function loadOutbounds(){
     $("outboundTable").innerHTML = `<table><tr><th>名称</th><th>协议</th><th>状态</th><th>操作</th></tr>${rows || '<tr><td colspan="4" class="small">暂无出站（默认直连）</td></tr>'}</table>`;
   }catch(e){ toast(e.message); }
 }
-function outboundForm(o){
+async function outboundForm(o){
+  if (!inboundCache.length) { try{ inboundCache = await api("inbounds"); }catch(e){} }
   o = o || {name:"", type:"direct", status:"enabled"};
   openModal(`<h3>${o.id?"编辑出站":"新建出站"}</h3>
   <form id="outForm">
@@ -654,10 +784,11 @@ function outboundForm(o){
     ${modalActions()}
   </form>`);
   if (!o.id){
+    wireNameSuggestion($("outName"), $("outType"));
     applyOutboundDefaults(o.type);
     $("outType").addEventListener("change", ()=>applyOutboundDefaults($("outType").value));
   } else {
-    renderDynSections("out", o.type, {settings: o.settings, tls: o.tls, transport: o.transport});
+    renderDynSections("out", o.type, {settings: o.settings, tls: o.tls, transport: o.transport}, false);
   }
   $("outForm").addEventListener("submit", async (e)=>{
     e.preventDefault();
