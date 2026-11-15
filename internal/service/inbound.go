@@ -117,7 +117,24 @@ func (s *InboundService) avoidPortConflict(in *model.Inbound) {
 }
 
 // Create 新建入站。
+// normalizeRawJSON 把 JSON 字面量 null 归一为空：客户端把空字段发成
+// "settings": null 时若原样落库，读取方 Unmarshal 会得到 nil map，
+// 再写入就 panic（configsvc/sub 都踩中过）。写边界统一拦下。
+func normalizeRawJSON(raw []byte) []byte {
+	if string(raw) == "null" {
+		return nil
+	}
+	return raw
+}
+
+func normalizeInbound(in *model.Inbound) {
+	in.Settings = normalizeRawJSON(in.Settings)
+	in.TLS = normalizeRawJSON(in.TLS)
+	in.Transport = normalizeRawJSON(in.Transport)
+}
+
 func (s *InboundService) Create(in *model.Inbound) error {
+	normalizeInbound(in)
 	s.avoidPortConflict(in)
 	if err := s.validate(in); err != nil {
 		return err
@@ -133,6 +150,7 @@ func (s *InboundService) Create(in *model.Inbound) error {
 
 // Update 更新入站（按 ID 全量更新可编辑字段）。
 func (s *InboundService) Update(in *model.Inbound) error {
+	normalizeInbound(in)
 	if _, err := s.Get(in.ID.String()); err != nil {
 		return err
 	}
