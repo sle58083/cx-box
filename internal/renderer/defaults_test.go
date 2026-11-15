@@ -70,6 +70,7 @@ func TestOutboundDefaultsPassValidation(t *testing.T) {
 		s = strings.ReplaceAll(s, `"server_name": ""`, `"server_name": "example.com"`)
 		s = strings.ReplaceAll(s, `"uuid": ""`, `"uuid": "11111111-2222-3333-4444-555555555555"`)
 		s = strings.ReplaceAll(s, `"password": ""`, `"password": "test-pw"`)
+		s = strings.ReplaceAll(s, `"username": ""`, `"username": "test-user"`)
 		return json.RawMessage(s)
 	}
 	for proto, d := range defs {
