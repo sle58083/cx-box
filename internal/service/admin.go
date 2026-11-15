@@ -49,6 +49,42 @@ func (s *AdminService) SetPassword(username, plainPassword string) error {
 	}
 }
 
+// SetCredentials 设置唯一的管理员账号的用户名与密码（单管理员面板语义）。
+// 已有管理员时更新第一行（改名 + 改密），没有时创建。
+// 安装脚本的 `sui admin -username X -password Y` 依赖这个语义：
+// 改名后 -show 必须显示新用户名，而不是旧的第一行。
+func (s *AdminService) SetCredentials(username, plainPassword string) error {
+	if username == "" {
+		return fmt.Errorf("admin: 用户名不能为空")
+	}
+	if plainPassword == "" {
+		return fmt.Errorf("admin: 密码不能为空")
+	}
+	var a model.Admin
+	if err := s.db.First(&a).Error; err == nil {
+		a.Username = username
+		a.PasswordHash = hashPassword(plainPassword)
+		return s.db.Save(&a).Error
+	} else if err == gorm.ErrRecordNotFound {
+		return s.db.Create(&model.Admin{Username: username, PasswordHash: hashPassword(plainPassword)}).Error
+	} else {
+		return err
+	}
+}
+
+// EnsureDefault 在没有任何管理员时创建默认账号 admin/admin。
+// 对应 CLI 注释里的约定：「首次运行会自动创建默认 admin」。
+func (s *AdminService) EnsureDefault() error {
+	var cnt int64
+	if err := s.db.Model(&model.Admin{}).Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt > 0 {
+		return nil
+	}
+	return s.db.Create(&model.Admin{Username: "admin", PasswordHash: hashPassword("admin")}).Error
+}
+
 // Verify 校验用户名密码。
 func (s *AdminService) Verify(username, plainPassword string) bool {
 	var a model.Admin
