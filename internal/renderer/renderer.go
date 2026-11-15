@@ -23,6 +23,9 @@ type ProxyUser struct {
 	Name     string
 	UUID     string // vless/vmess/tuic 用，已解密
 	Password string // 协议密码明文（已解密；anytls 渲染器会再 base64）
+	// InboundIDs 是该客户端选中的入站 ID 列表（空 = 适用全部用户入口入站）；
+	// 生成器据此把用户只注入被选中的入站，订阅视图不使用该字段。
+	InboundIDs []string
 }
 
 // RenderContext 提供渲染期间共享数据与已解密的敏感值。
@@ -90,8 +93,8 @@ type FieldSchema struct {
 	Label    string          `json:"label"`
 	Type     string          `json:"type"` // text/number/bool/select/array/duration
 	Required bool            `json:"required"`
-	Encrypt  bool            `json:"encrypt"`          // 是否 🔐 加密落库（如 anytls password）
-	Help     string          `json:"help,omitempty"`   // 帮助提示（如 2022-blake3 需 base64 密钥）
+	Encrypt  bool            `json:"encrypt"`        // 是否 🔐 加密落库（如 anytls password）
+	Help     string          `json:"help,omitempty"` // 帮助提示（如 2022-blake3 需 base64 密钥）
 	Options  []FieldOption   `json:"options,omitempty"`
 	Default  json.RawMessage `json:"default,omitempty"`
 }
