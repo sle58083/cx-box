@@ -8,11 +8,10 @@
 #   - 管理脚本 /usr/bin/s-ui          -> /usr/bin/cx-box（cx-box.sh）
 #   - 数据库 db/s-ui.db               -> db/cx-box.db（相对二进制所在目录）
 #   - 发布包 s-ui-linux-<arch>.tar.gz -> cx-box-linux-<arch>.tar.gz
-#   - 环境变量 SUI_AUTO               -> 保留同名（README 已按此发布），
-#                                      同时支持 CXBOX_AUTO 覆盖。
+#   - 环境变量 CXBOX_AUTO             -> 全自动开关（默认开启，设为 0 走交互流程）。
 #
 # 与 s-ui 的差异（有意为之）：
-#   - cx-box 的 sing-box 内核由 sui 进程内托管，没有独立的 sing-box.service，
+#   - cx-box 的 sing-box 内核由 cx-box 进程内托管，没有独立的 sing-box.service，
 #     本脚本绝不停止/删除其他程序的 sing-box.service。
 #   - cx-box 没有 /etc/s-ui 这类配置目录，purge 只清自己的文件。
 
@@ -25,18 +24,18 @@ cur_dir=$(pwd)
 
 REPO="sle58083/cx-box"
 INSTALL_DIR="/usr/local/cx-box"
-BIN="${INSTALL_DIR}/sui"
+BIN="${INSTALL_DIR}/cx-box"
 MENU_BIN="/usr/bin/cx-box"
 SERVICE_NAME="cx-box"
 DB_FILE="${INSTALL_DIR}/db/cx-box.db"
 
 # Full-auto is the DEFAULT install mode（与 s-ui 一致）：全程无交互。
 # 全新安装时生成随机账号密码 + 随机面板路径 + 空闲端口 + API token 并放行防火墙；
-# 升级时保留现有设置。要恢复交互流程，设置 SUI_AUTO=0（或 CXBOX_AUTO=0）。
-#   bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh)            # auto (default)
-#   SUI_AUTO=1 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh) # auto
-#   SUI_AUTO=0 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh) # interactive
-CXBOX_AUTO="${CXBOX_AUTO:-${SUI_AUTO:-1}}"
+# 升级时保留现有设置。要恢复交互流程，设置 CXBOX_AUTO=0。
+#   bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh)              # auto (default)
+#   CXBOX_AUTO=1 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh) # auto
+#   CXBOX_AUTO=0 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh) # interactive
+CXBOX_AUTO="${CXBOX_AUTO:-1}"
 
 is_auto() {
     [[ "$CXBOX_AUTO" != "0" && "$CXBOX_AUTO" != "n" && "$CXBOX_AUTO" != "N" ]]
@@ -341,9 +340,10 @@ install_cx-box() {
     tar zxvf cx-box-linux-$(arch).tar.gz
     rm cx-box-linux-$(arch).tar.gz -f
 
-    chmod +x cx-box/sui cx-box/cx-box.sh
+    chmod +x cx-box/cx-box cx-box/cx-box.sh
     cp cx-box/cx-box.sh ${MENU_BIN}
     cp -rf cx-box /usr/local/
+    rm -f "${INSTALL_DIR}/sui" # v0.4.0 及更早的旧二进制名，升级时清理
     cp -f cx-box/*.service /etc/systemd/system/
     rm -rf cx-box
 
