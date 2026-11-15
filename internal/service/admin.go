@@ -51,7 +51,7 @@ func (s *AdminService) SetPassword(username, plainPassword string) error {
 
 // SetCredentials 设置唯一的管理员账号的用户名与密码（单管理员面板语义）。
 // 已有管理员时更新第一行（改名 + 改密），没有时创建。
-// 安装脚本的 `sui admin -username X -password Y` 依赖这个语义：
+// 安装脚本的 `cx-box admin -username X -password Y` 依赖这个语义：
 // 改名后 -show 必须显示新用户名，而不是旧的第一行。
 func (s *AdminService) SetCredentials(username, plainPassword string) error {
 	if username == "" {
