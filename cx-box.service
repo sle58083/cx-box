@@ -1,0 +1,14 @@
+[Unit]
+Description=cx-box Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/cx-box/
+ExecStart=/usr/local/cx-box/sui
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
