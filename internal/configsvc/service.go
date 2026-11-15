@@ -16,6 +16,7 @@ import (
 	"github.com/sle58083/cx-box/internal/kernel"
 	"github.com/sle58083/cx-box/internal/model"
 	"github.com/sle58083/cx-box/internal/renderer"
+	"github.com/sle58083/cx-box/internal/service"
 )
 
 // Service 是配置生成与应用的服务（单体版）。
@@ -58,6 +59,12 @@ func (s *Service) Generate(ctx context.Context) (map[string]any, error) {
 	// 证书绑定解析：入站绑了 cert_id 时把证书落盘，并把路径注入其 TLS
 	// （TLS 里已显式写了 certificate_path/key_path 的不覆盖）。
 	if err := s.resolveCertBindings(ctx, inbounds); err != nil {
+		return nil, err
+	}
+
+	// 自动证书兜底：需要 TLS 证书但既没绑定证书、也没写证书路径的入站，
+	// 注入面板自动生成的共享自签证书，保证免绑证书一键应用。
+	if err := s.ensureAutoCerts(ctx, inbounds); err != nil {
 		return nil, err
 	}
 
@@ -164,6 +171,76 @@ func (s *Service) resolveCertBindings(ctx context.Context, inbounds []model.Inbo
 		inbounds[i].TLS = raw
 	}
 	return nil
+}
+
+// ensureAutoCerts 为「启用了普通 TLS、没有 Reality、未绑定证书且未写证书
+// 路径」的入站注入自动证书路径（就地修改 inbounds）。覆盖 trojan /
+// hysteria2 / tuic / anytls 以及 plain-TLS 的 vless 等一切需要证书的入站。
+func (s *Service) ensureAutoCerts(ctx context.Context, inbounds []model.Inbound) error {
+	if s.kernel == nil {
+		return nil
+	}
+	for i := range inbounds {
+		in := &inbounds[i]
+		if in.CertID != nil && *in.CertID != "" {
+			continue
+		}
+		if len(in.TLS) == 0 {
+			continue
+		}
+		tls := map[string]any{}
+		if err := json.Unmarshal(in.TLS, &tls); err != nil {
+			continue // TLS 本身不合法时留给 renderer 报错，不在这里掩盖
+		}
+		if enabled, _ := tls["enabled"].(bool); !enabled {
+			continue
+		}
+		if _, hasReality := tls["reality"]; hasReality {
+			continue
+		}
+		cp, _ := tls["certificate_path"].(string)
+		kp, _ := tls["key_path"].(string)
+		if cp != "" && kp != "" {
+			continue
+		}
+		cert, err := s.autoCert(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.kernel.WriteCert(cert.ID.String(), cert.CertPEM, cert.KeyPEM); err != nil {
+			return err
+		}
+		certFile, keyFile := s.kernel.CertPaths(cert.ID.String())
+		if cp == "" {
+			tls["certificate_path"] = certFile
+		}
+		if kp == "" {
+			tls["key_path"] = keyFile
+		}
+		raw, err := json.Marshal(tls)
+		if err != nil {
+			return err
+		}
+		in.TLS = raw
+	}
+	return nil
+}
+
+// autoCert 返回面板自动证书（按名称查已有，没有就生成一张自签并落库）。
+func (s *Service) autoCert(ctx context.Context) (*model.Certificate, error) {
+	var cert model.Certificate
+	err := s.db.WithContext(ctx).Where("name = ?", service.AutoCertName).First(&cert).Error
+	if err == nil {
+		return &cert, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, fmt.Errorf("configsvc: 读取自动证书失败: %w", err)
+	}
+	created, err := service.NewCertificateService(s.db).SelfSigned(ctx, service.AutoCertName, []string{"www.bing.com"}, 3650)
+	if err != nil {
+		return nil, fmt.Errorf("configsvc: 生成自动证书失败: %w", err)
+	}
+	return created, nil
 }
 
 // activeUsers 返回可下发到 sing-box 的客户端（转为 renderer.ProxyUser）。
