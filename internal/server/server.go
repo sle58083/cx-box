@@ -20,7 +20,7 @@ import (
 )
 
 // Version 是面板版本号（随发布递增）。
-const Version = "0.5.0"
+const Version = "0.5.1"
 
 // Server 是 cx-box 的 HTTP 服务器。
 type Server struct {
