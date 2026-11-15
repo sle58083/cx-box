@@ -157,6 +157,12 @@ func (s *Service) resolveCertBindings(ctx context.Context, inbounds []model.Inbo
 			if err := json.Unmarshal(inbounds[i].TLS, &tls); err != nil {
 				return fmt.Errorf("configsvc: 入站 %q 的 TLS 不是合法 JSON: %w", inbounds[i].Name, err)
 			}
+			// TLS 存的是 JSON 字面量 null 时 Unmarshal 会把 map 置 nil，
+			// 下面写 certificate_path 就会 panic（assignment to entry in
+			// nil map，真机踩中：证书绑定的 vmess 入站 TLS 为 null）。
+			if tls == nil {
+				tls = map[string]any{}
+			}
 		}
 		if _, ok := tls["certificate_path"]; !ok {
 			tls["certificate_path"] = certFile
@@ -191,6 +197,9 @@ func (s *Service) ensureAutoCerts(ctx context.Context, inbounds []model.Inbound)
 		tls := map[string]any{}
 		if err := json.Unmarshal(in.TLS, &tls); err != nil {
 			continue // TLS 本身不合法时留给 renderer 报错，不在这里掩盖
+		}
+		if tls == nil {
+			continue // TLS 为 JSON null，等同未配置
 		}
 		if enabled, _ := tls["enabled"].(bool); !enabled {
 			continue
