@@ -9,12 +9,11 @@ import (
 // 全局结构字段名常量。中立模型 → sing-box 全局结构（log/dns/route）的
 // 映射集中于此（§9.6），协议级字段映射在 renderer 包。
 const (
-	kLog          = "log"
-	kDNS          = "dns"
-	kRoute        = "route"
-	kInbounds     = "inbounds"
-	kOutbounds    = "outbounds"
-	kExperimental = "experimental"
+	kLog       = "log"
+	kDNS       = "dns"
+	kRoute     = "route"
+	kInbounds  = "inbounds"
+	kOutbounds = "outbounds"
 
 	kLevel     = "level"
 	kTimestamp = "timestamp"
