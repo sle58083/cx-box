@@ -130,8 +130,51 @@ func (r *VLESSRenderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) (str
 		return "", fmt.Errorf("vless: 订阅 URI 缺少 server/port/uuid")
 	}
 	q := url.Values{}
-	q.Set("type", "tcp")
-	q.Set("security", "tls")
+	q.Set("encryption", "none")
+	// 传输层：默认 tcp；ws 时带 path/host。
+	ttype := "tcp"
+	if tm, err := transportMap(cfg.Transport); err == nil && tm != nil {
+		if t := str(tm, fType); t != "" {
+			ttype = t
+		}
+		if ttype == "ws" {
+			if p := str(tm, "path"); p != "" {
+				q.Set("path", p)
+			}
+			if h, ok := tm["headers"].(map[string]any); ok {
+				if host := str(h, "Host"); host != "" {
+					q.Set("host", host)
+				}
+			}
+		}
+	}
+	q.Set("type", ttype)
+	if flow := str(settings, fFlow); flow != "" {
+		q.Set("flow", flow)
+	}
+	tls, _ := tlsMap(cfg.TLS)
+	switch {
+	case realityEnabled(tls):
+		q.Set("security", "reality")
+		if sni := str(tls, fServerName); sni != "" {
+			q.Set("sni", sni)
+		}
+		if rm, ok := tls[fReality].(map[string]any); ok {
+			if pk := str(rm, "public_key"); pk != "" {
+				q.Set("pbk", pk)
+			}
+			if sid := str(rm, "short_id"); sid != "" {
+				q.Set("sid", sid)
+			}
+		}
+	case tlsEnabled(tls):
+		q.Set("security", "tls")
+		if sni := str(tls, fServerName); sni != "" {
+			q.Set("sni", sni)
+		}
+	default:
+		q.Set("security", "none")
+	}
 	return fmt.Sprintf("vless://%s@%s:%s?%s#%s", user.UUID, server, port, q.Encode(), cfg.Name), nil
 }
 
