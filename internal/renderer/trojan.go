@@ -125,6 +125,9 @@ func (r *TrojanRenderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) (st
 	if sni := sniFromTLS(cfg); sni != "" {
 		q.Set("sni", sni)
 	}
+	if insecureFromTLS(cfg) {
+		q.Set("insecure", "1")
+	}
 	return fmt.Sprintf("trojan://%s@%s:%s?%s#%s", user.Password, server, port, q.Encode(), cfg.Name), nil
 }
 
