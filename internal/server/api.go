@@ -1,6 +1,9 @@
 package server
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"strings"
 
@@ -30,7 +33,10 @@ func (s *Server) registerPanelRoutes(r *gin.Engine, panelPath string) {
 	auth.GET("/setting", s.handleGetSetting)
 	auth.PUT("/setting", s.handleUpdateSetting)
 	auth.POST("/admin/credentials", s.handleSetCredentials)
-	auth.GET("/protocols", func(c *gin.Context) { ok(c, renderer.Metas()) })
+	auth.GET("/protocols", func(c *gin.Context) {
+		ok(c, gin.H{"protocols": renderer.Metas(), "defaults": renderer.Defaults()})
+	})
+	auth.POST("/tools/reality-keypair", s.handleRealityKeypair)
 	auth.POST("/apply", s.handleApply)
 
 	auth.GET("/inbounds", s.listInbounds)
@@ -50,6 +56,11 @@ func (s *Server) registerPanelRoutes(r *gin.Engine, panelPath string) {
 	auth.GET("/clients/:id", s.getClient)
 	auth.PUT("/clients/:id", s.updateClient)
 	auth.DELETE("/clients/:id", s.deleteClient)
+
+	auth.GET("/certificates", s.listCertificates)
+	auth.POST("/certificates", s.createCertificate)
+	auth.POST("/certificates/selfsigned", s.createSelfSigned)
+	auth.DELETE("/certificates/:id", s.deleteCertificate)
 }
 
 // panelIndex 下发内嵌的面板单页应用（web/index.html，登录与管理界面）。
@@ -417,4 +428,78 @@ func (s *Server) deleteClient(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"deleted": true})
+}
+
+// ---------- 证书 ----------
+
+func (s *Server) listCertificates(c *gin.Context) {
+	list, err := s.cert.List(c.Request.Context())
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err)
+		return
+	}
+	ok(c, list)
+}
+
+type certImportReq struct {
+	Name    string `json:"name"`
+	CertPEM string `json:"cert_pem"`
+	KeyPEM  string `json:"key_pem"`
+}
+
+func (s *Server) createCertificate(c *gin.Context) {
+	var req certImportReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	cert, err := s.cert.Create(c.Request.Context(), req.Name, req.CertPEM, req.KeyPEM)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	ok(c, cert)
+}
+
+type selfSignedReq struct {
+	Name    string   `json:"name"`
+	Domains []string `json:"domains"`
+	Days    int      `json:"days"`
+}
+
+func (s *Server) createSelfSigned(c *gin.Context) {
+	var req selfSignedReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	cert, err := s.cert.SelfSigned(c.Request.Context(), req.Name, req.Domains, req.Days)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	ok(c, cert)
+}
+
+func (s *Server) deleteCertificate(c *gin.Context) {
+	if err := s.cert.Delete(c.Request.Context(), c.Param("id")); err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	ok(c, gin.H{"deleted": true})
+}
+
+// handleRealityKeypair 生成一对 Reality（X25519）密钥，编码与 sing-box 一致
+// （base64 RawURLEncoding）。私钥填入站 TLS，公钥供客户端/订阅使用。
+func (s *Server) handleRealityKeypair(c *gin.Context) {
+	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err)
+		return
+	}
+	enc := base64.RawURLEncoding
+	ok(c, gin.H{
+		"private_key": enc.EncodeToString(priv.Bytes()),
+		"public_key":  enc.EncodeToString(priv.PublicKey().Bytes()),
+	})
 }
