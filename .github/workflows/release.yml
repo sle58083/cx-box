@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64, 386, armv7, s390x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build release package
+        run: bash scripts/build-release.sh "${{ matrix.arch }}" "${{ github.ref_name }}"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" dist/cx-box-linux-${{ matrix.arch }}.tar.gz --clobber || gh release create "${{ github.ref_name }}" dist/cx-box-linux-${{ matrix.arch }}.tar.gz --generate-notes
