@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultDownloadURL(t *testing.T) {
@@ -45,5 +47,35 @@ func TestExtractSingBox(t *testing.T) {
 	got, err := os.ReadFile(dest)
 	if err != nil || !bytes.Equal(got, content) {
 		t.Fatalf("dest content = %q, err %v", got, err)
+	}
+}
+
+// 回归：经 HTTP apply 触发的 Restart 传入的是请求级 ctx，请求结束即取消；
+// 内核进程绝不能因此被杀（Start 内部与调用方 ctx 解耦）。
+func TestStartSurvivesCallerContextCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses shell script as fake binary")
+	}
+	dir := t.TempDir()
+	m := New(dir, "")
+	bin := m.BinaryPath()
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nsleep 30\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cancel() // 模拟请求结束
+	time.Sleep(300 * time.Millisecond)
+	if !m.Running() {
+		t.Fatal("kernel died with caller context; Start must detach from caller ctx")
+	}
+	if err := m.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
 	}
 }
