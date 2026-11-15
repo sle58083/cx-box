@@ -21,6 +21,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// AutoCertName 是面板自动证书的名称：TLS 入站未绑定证书时，configsvc 用这张
+// 共享自签证书兜底注入，保证「不绑证书也能一键应用」。它会出现在证书列表里，
+// 用户随时可以改为绑定自己的证书。
+const AutoCertName = "自动证书（系统生成）"
+
 // CertificateService 管理证书：手动导入 PEM、一键自签、删除引用保护。
 // 证书内容只存 DB（model.Certificate 的 PEM 字段不对 API 输出），
 // 生成 sing-box 配置时由 configsvc 落盘到 etc/certs/ 并注入 TLS 路径。
