@@ -114,14 +114,25 @@ func Defaults() map[string]ProtocolDefaults {
 				""),
 		},
 		"socks": {
-			// 代理 IP 的主流形态：SOCKS5 + 账号密码（IP 白名单授权时删掉后两项即可）。
+			// 入站：本机 SOCKS5 代理端口（网关式，账号在 users 里静态配置，请改掉默认密码）。
+			Inbound: dir(1080,
+				`{"users": [{"username": "user1", "password": "pass1234"}]}`,
+				"",
+				""),
+			// 出站：代理 IP 的主流形态 SOCKS5 + 账号密码（IP 白名单授权时删掉后两项即可）。
 			Outbound: dir(0,
 				`{"server": "", "server_port": 1080, "version": "5", "username": "", "password": ""}`,
 				"",
 				""),
 		},
 		"http": {
-			// HTTP 代理默认明文形态；HTTPS 代理在 TLS 配置里填 {"enabled": true, "server_name": ""}。
+			// 入站：本机 HTTP 代理端口（网关式，账号在 users 里静态配置，请改掉默认密码）；
+			// 想要 HTTPS 代理时在 TLS 配置里填 {"enabled": true}，证书应用时自动生成。
+			Inbound: dir(8080,
+				`{"users": [{"username": "user1", "password": "pass1234"}]}`,
+				"",
+				""),
+			// 出站默认明文形态；HTTPS 代理在 TLS 配置里填 {"enabled": true, "server_name": ""}。
 			Outbound: dir(0,
 				`{"server": "", "server_port": 8080, "username": "", "password": ""}`,
 				"",
