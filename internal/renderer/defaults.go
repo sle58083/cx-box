@@ -35,6 +35,9 @@ func dir(port int, settings, tls, transport string) *DirectionDefaults {
 }
 
 // Defaults 返回全部已注册协议的默认配置模板（面板 /api/protocols 一并下发）。
+// 入站默认端口按协议区分（vless 443 / vmess 8443 / trojan 4443 / ss 8388 /
+// hysteria2 36712 / tuic 10443 / anytls 9443），避免连建多个入站时端口互相冲突；
+// 即便撞上已占用端口，service 层新建时也会自动顺延避让。
 func Defaults() map[string]ProtocolDefaults {
 	return map[string]ProtocolDefaults{
 		"vless": {
@@ -45,12 +48,12 @@ func Defaults() map[string]ProtocolDefaults {
 				""),
 			Outbound: dir(443,
 				`{"server": "", "server_port": 443, "uuid": "", "flow": "xtls-rprx-vision"}`,
-				`{"enabled": true, "server_name": "www.microsoft.com", "reality": {"enabled": true, "public_key": "", "short_id": ""}}`,
+				`{"enabled": true, "server_name": "www.microsoft.com", "reality": {"enabled": true, "public_key": "", "short_id": ""}, "utls": {"enabled": true, "fingerprint": "chrome"}}`,
 				""),
 		},
 		"vmess": {
 			// 本 renderer 的 vmess 不带 TLS 层，默认 ws 传输（入站无 alter_id 概念）。
-			Inbound: dir(443,
+			Inbound: dir(8443,
 				`{}`,
 				"",
 				`{"type": "ws", "path": "/vmess", "headers": {"Host": ""}}`),
@@ -60,7 +63,7 @@ func Defaults() map[string]ProtocolDefaults {
 				`{"type": "ws", "path": "/vmess", "headers": {"Host": ""}}`),
 		},
 		"trojan": {
-			Inbound: dir(443,
+			Inbound: dir(4443,
 				`{}`,
 				`{"enabled": true, "server_name": "", "alpn": ["h2", "http/1.1"]}`,
 				""),
@@ -81,7 +84,7 @@ func Defaults() map[string]ProtocolDefaults {
 				""),
 		},
 		"hysteria2": {
-			Inbound: dir(443,
+			Inbound: dir(36712,
 				`{"up_mbps": 100, "down_mbps": 100}`,
 				`{"enabled": true, "server_name": "", "alpn": ["h3"]}`,
 				""),
@@ -91,7 +94,7 @@ func Defaults() map[string]ProtocolDefaults {
 				""),
 		},
 		"tuic": {
-			Inbound: dir(443,
+			Inbound: dir(10443,
 				`{"congestion_control": "bbr"}`,
 				`{"enabled": true, "server_name": "", "alpn": ["h3"]}`,
 				""),
@@ -101,7 +104,7 @@ func Defaults() map[string]ProtocolDefaults {
 				""),
 		},
 		"anytls": {
-			Inbound: dir(443,
+			Inbound: dir(9443,
 				`{}`,
 				`{"enabled": true, "server_name": ""}`,
 				""),
