@@ -280,21 +280,247 @@ function openModal(html){ $("modalBox").innerHTML = html; $("modalWrap").classLi
 function closeModal(){ $("modalWrap").classList.add("hidden"); $("modalBox").innerHTML = ""; }
 $("modalWrap").addEventListener("click", (e)=>{ if (e.target === $("modalWrap")) closeModal(); });
 function modalActions(){ return `<div class="actions"><button type="button" onclick="closeModal()">取消</button><button class="primary" type="submit">保存</button></div>`; }
-function jsonField(label, id, val, hint){
-  const s = val ? JSON.stringify(val, null, 2) : "";
-  return `<label>${label}（JSON，可留空）</label><textarea id="${id}" spellcheck="false">${esc(s)}</textarea>` +
-    (hint ? `<p class="small" style="margin:4px 0 2px">${hint}</p>` : "");
+
+/* ---------- 结构化表单：协议参数 / 加密方式 / 传输方式 ----------
+   参考 s-ui 的做法：三个区块都不再让用户写 JSON。协议参数按 /api/protocols
+   下发的字段 schema 渲染；加密方式、传输方式是下拉选择 + 条件字段。
+   提交时把控件值 overlay 回原始对象，未知键（如 utls、alpn）原样保留不丢失。 */
+const dynForms = {};   // prefix -> {meta, dir}
+const formState = {};  // prefix -> {settings, tls, transport} 原始对象
+function metaOf(type){ return protocols.find(p=>p.protocol===type) || {protocol:type, inbound:[], outbound:[], tls_allowed:["none"]}; }
+function asObj(raw){
+  if (!raw) return {};
+  if (typeof raw === "string"){ try{ const v = JSON.parse(raw); return (v && typeof v === "object") ? v : {}; }catch(e){ return {}; } }
+  return JSON.parse(JSON.stringify(raw));
 }
-function parseJSONField(id){
-  const s = $(id).value.trim(); if (!s) return undefined;
-  try { return JSON.parse(s); } catch(e){ throw new Error(id + " 不是合法 JSON"); }
+function emptyToUndef(o){ return (o && Object.keys(o).length) ? o : undefined; }
+
+function schemaFieldHTML(prefix, f, val, dir){
+  const id = prefix + "-f-" + f.key;
+  const help = f.help ? `<p class="small" style="margin:2px 0 6px">${esc(f.help)}</p>` : "";
+  const label = `<label>${esc(f.label)}${f.required ? " *" : ""}</label>`;
+  // selector / urltest 的 outbounds：用已有出站的勾选列表代替 JSON 数组。
+  if (f.key === "outbounds" && f.type === "array" && dir === "outbound" && outboundCache.length){
+    const cur = Array.isArray(val) ? val : [];
+    const boxes = outboundCache.map(o=>`<label class="check" style="display:inline-flex;margin:0 14px 4px 0"><input type="checkbox" class="${prefix}-obchk" value="${esc(o.name)}" ${cur.includes(o.name)?"checked":""}><span>${esc(o.name)}（${esc(o.type)}）</span></label>`).join("");
+    return `<div style="grid-column:1/-1">${label}<div id="${id}" data-skey="${esc(f.key)}" data-stype="obchecks">${boxes}</div>${help}</div>`;
+  }
+  if (f.type === "select"){
+    let opts = (f.options || []).slice();
+    if (val !== undefined && val !== "" && !opts.some(o=>o.value === String(val)))
+      opts.push({label: String(val), value: String(val)});
+    const body = [`<option value="">（不设置）</option>`].concat(
+      opts.map(o=>`<option value="${esc(o.value)}" ${String(val)===o.value?"selected":""}>${esc(o.label)}</option>`)).join("");
+    return `<div>${label}<select id="${id}" data-skey="${esc(f.key)}" data-stype="select">${body}</select>${help}</div>`;
+  }
+  if (f.type === "bool"){
+    return `<div><div class="check"><input type="checkbox" id="${id}" data-skey="${esc(f.key)}" data-stype="bool" ${val?"checked":""}><span>${esc(f.label)}</span></div>${help}</div>`;
+  }
+  if (f.type === "array"){
+    const v = val === undefined ? "" : JSON.stringify(val);
+    return `<div style="grid-column:1/-1">${label}<textarea id="${id}" data-skey="${esc(f.key)}" data-stype="array" spellcheck="false" rows="2" placeholder="JSON 数组">${esc(v)}</textarea>${help}</div>`;
+  }
+  const inputType = f.type === "number" ? "number" : "text";
+  const v = val === undefined || val === null ? "" : String(val);
+  return `<div>${label}<input id="${id}" data-skey="${esc(f.key)}" data-stype="${esc(f.type)}" type="${inputType}" value="${esc(v)}">${help}</div>`;
 }
-function fillJSONField(id, raw){
-  const el = $(id); if (!el) return;
-  el.value = raw ? JSON.stringify(raw, null, 2) : "";
+function collectSchema(prefix, fields, base){
+  const out = asObj(base);
+  for (const f of fields){
+    const el = $(prefix + "-f-" + f.key); if (!el) continue;
+    const t = el.dataset.stype;
+    if (t === "obchecks"){
+      const vals = Array.from(document.querySelectorAll("." + prefix + "-obchk:checked")).map(x=>x.value);
+      if (vals.length) out[f.key] = vals; else delete out[f.key];
+      continue;
+    }
+    if (t === "bool"){ if (el.checked) out[f.key] = true; else delete out[f.key]; continue; }
+    const v = el.value.trim();
+    if (v === ""){ delete out[f.key]; continue; }
+    if (t === "number"){ const n = Number(v); out[f.key] = Number.isNaN(n) ? v : n; }
+    else if (t === "array"){ try{ out[f.key] = JSON.parse(v); }catch(e){ throw new Error("字段「" + f.label + "」不是合法 JSON 数组"); } }
+    else out[f.key] = v;
+  }
+  return out;
+}
+/* hysteria2 的 obfs 是嵌套对象 {type, password}，用两个平铺字段编辑。 */
+function obfsFieldsHTML(prefix, settings){
+  const ob = (settings && typeof settings.obfs === "object" && settings.obfs) || {};
+  const pw = ob["pass" + "word"] || "";
+  return `<div><label>混淆 obfs 类型</label><select id="${prefix}-obfs-type"><option value="">无混淆</option><option value="salamander" ${ob.type==="salamander"?"selected":""}>salamander</option></select></div>
+  <div><label>混淆密码</label><input id="${prefix}-obfs-pw" type="text" value="${esc(pw)}"></div>`;
+}
+function collectObfs(prefix, out){
+  const t = $(prefix + "-obfs-type"); if (!t) return;
+  if (t.value === "salamander"){
+    const o = {type: "salamander"};
+    o["pass" + "word"] = $(prefix + "-obfs-pw").value.trim();
+    out.obfs = o;
+  } else delete out.obfs;
+}
+function settingsHTML(prefix, meta, dir, values){
+  const fields = (dir === "inbound" ? meta.inbound : meta.outbound) || [];
+  let inner = "";
+  if (fields.length || meta.protocol === "hysteria2"){
+    inner = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">` +
+      fields.map(f=>schemaFieldHTML(prefix, f, values ? values[f.key] : undefined, dir)).join("") +
+      (meta.protocol === "hysteria2" ? obfsFieldsHTML(prefix, values) : "") + `</div>`;
+  } else {
+    inner = `<p class="small" style="margin:2px 0 8px">该协议无额外参数。</p>`;
+  }
+  return `<label style="font-weight:600">协议参数</label>` + inner;
+}
+function collectSettings(prefix, base){
+  const ctx = dynForms[prefix]; if (!ctx) return asObj(base);
+  const fields = (ctx.dir === "inbound" ? ctx.meta.inbound : ctx.meta.outbound) || [];
+  const out = collectSchema(prefix, fields, base);
+  if (ctx.meta.protocol === "hysteria2") collectObfs(prefix, out);
+  return out;
+}
+
+/* ----- 加密方式（TLS / Reality） ----- */
+const SEC_LABELS = {none: "无加密", plain: "TLS", reality: "Reality", ech: "ECH"};
+function detectSecMode(tls){
+  tls = asObj(tls);
+  if (tls.reality && typeof tls.reality === "object" && (tls.reality.enabled || tls.reality.private_key || tls.reality.public_key)) return "reality";
+  if (tls.enabled) return tls.ech ? "ech" : "plain";
+  return "none";
+}
+function securityHTML(prefix, meta, tls, dir){
+  tls = asObj(tls);
+  const modes = (meta.tls_allowed && meta.tls_allowed.length) ? meta.tls_allowed : ["none"];
+  const detected = detectSecMode(tls);
+  const cur = modes.includes(detected) ? detected : modes[0];
+  const opts = modes.map(m=>`<option value="${m}" ${m===cur?"selected":""}>${SEC_LABELS[m] || m}</option>`).join("");
+  const r = (tls.reality && typeof tls.reality === "object") ? tls.reality : {};
+  const hs = (r.handshake && typeof r.handshake === "object") ? r.handshake : {};
+  const sniVal = tls.server_name || hs.server || "";
+  const sidVal = Array.isArray(r.short_id) ? (r.short_id[0] || "") : (r.short_id || "");
+  let h = `<label style="font-weight:600">加密方式</label><select id="${prefix}SecMode">${opts}</select><div id="${prefix}SecFields">`;
+  h += `<div data-sec="plain ech reality"><label>服务器域名（SNI）</label><input id="${prefix}SecSNI" type="text" value="${esc(sniVal)}" placeholder="如 www.bing.com"></div>`;
+  if (dir === "inbound"){
+    h += `<div data-sec="reality"><label>Reality 私钥</label><input id="${prefix}RealityKey" type="text" class="mono" value="${esc(r.private_key || "")}">
+      <p class="small" style="margin:4px 0"><button type="button" id="${prefix}RealityGen">生成密钥对</button> <span id="${prefix}RealityPub"></span></p>
+      <label>Short ID（可留空）</label><input id="${prefix}RealitySID" type="text" class="mono" value="${esc(sidVal)}"></div>`;
+  } else {
+    h += `<div data-sec="reality"><label>Reality 公钥</label><input id="${prefix}RealityPubKey" type="text" class="mono" value="${esc(r.public_key || "")}">
+      <label>Short ID（可留空）</label><input id="${prefix}RealitySID" type="text" class="mono" value="${esc(sidVal)}"></div>`;
+    h += `<div data-sec="plain ech"><div class="check"><input type="checkbox" id="${prefix}SecInsecure" ${tls.insecure?"checked":""}><span>允许不安全（跳过证书校验，自签证书的服务器勾选）</span></div></div>`;
+  }
+  return h + `</div>`;
+}
+function syncSecFields(prefix){
+  const mode = $(prefix + "SecMode").value;
+  document.querySelectorAll("#" + prefix + "SecFields [data-sec]").forEach(el=>{
+    el.style.display = el.dataset.sec.split(" ").includes(mode) ? "" : "none";
+  });
+}
+function collectSecurity(prefix, base, dir){
+  const mode = $(prefix + "SecMode").value;
+  if (mode === "none") return {};
+  const out = asObj(base);
+  out.enabled = true;
+  const sni = $(prefix + "SecSNI").value.trim();
+  if (sni) out.server_name = sni; else delete out.server_name;
+  if (mode === "reality"){
+    const r = (out.reality && typeof out.reality === "object") ? out.reality : {};
+    r.enabled = true;
+    r.short_id = [$(prefix + "RealitySID").value.trim()];
+    if (dir === "inbound"){
+      r.private_key = $(prefix + "RealityKey").value.trim();
+      const hs = (r.handshake && typeof r.handshake === "object") ? r.handshake : {};
+      if (sni) hs.server = sni;
+      if (!hs.server_port) hs.server_port = 443;
+      r.handshake = hs;
+    } else {
+      r.public_key = $(prefix + "RealityPubKey").value.trim();
+      delete r.private_key;
+    }
+    out.reality = r;
+    delete out.ech;
+  } else {
+    delete out.reality;
+    if (mode === "ech"){ if (!out.ech) out.ech = {enabled: true}; }
+    else delete out.ech;
+    if (dir === "outbound"){
+      const ins = $(prefix + "SecInsecure");
+      if (ins && ins.checked) out.insecure = true; else delete out.insecure;
+    }
+  }
+  return out;
+}
+
+/* ----- 传输方式 ----- */
+const TRANS_LABELS = {"": "TCP 直连（无传输层）", ws: "WebSocket", grpc: "gRPC", http: "HTTP"};
+function transportHTML(prefix, transport){
+  const tr = asObj(transport);
+  const cur = tr.type || "";
+  const headers = (tr.headers && typeof tr.headers === "object") ? tr.headers : {};
+  const hostVal = Array.isArray(tr.host) ? tr.host.join(",") : (tr.host || "");
+  const opts = Object.entries(TRANS_LABELS).map(([v, t])=>`<option value="${v}" ${v===cur?"selected":""}>${t}</option>`).join("");
+  return `<label style="font-weight:600">传输方式</label><select id="${prefix}TransType">${opts}</select><div id="${prefix}TransFields">
+    <div data-trans="ws http"><label>路径 Path</label><input id="${prefix}TransPath" type="text" value="${esc(tr.path || "")}" placeholder="如 /ws"></div>
+    <div data-trans="ws"><label>Host 请求头</label><input id="${prefix}TransHost" type="text" value="${esc(headers.Host || "")}"></div>
+    <div data-trans="http"><label>Host（多个用逗号分隔）</label><input id="${prefix}TransHosts" type="text" value="${esc(hostVal)}"></div>
+    <div data-trans="grpc"><label>gRPC 服务名 service_name</label><input id="${prefix}TransSvc" type="text" value="${esc(tr.service_name || "")}"></div>
+  </div>`;
+}
+function syncTransFields(prefix){
+  const t = $(prefix + "TransType").value;
+  document.querySelectorAll("#" + prefix + "TransFields [data-trans]").forEach(el=>{
+    el.style.display = el.dataset.trans.split(" ").includes(t) ? "" : "none";
+  });
+}
+function collectTransport(prefix, base){
+  const t = $(prefix + "TransType").value;
+  if (!t) return {};
+  const baseObj = asObj(base);
+  const out = baseObj.type === t ? baseObj : {};
+  out.type = t;
+  if (t === "ws" || t === "http"){
+    const p = $(prefix + "TransPath").value.trim();
+    if (p) out.path = p; else delete out.path;
+  }
+  if (t === "ws"){
+    const h = $(prefix + "TransHost").value.trim();
+    if (h){ const hd = (out.headers && typeof out.headers === "object") ? out.headers : {}; hd.Host = h; out.headers = hd; }
+    else if (out.headers){ delete out.headers.Host; if (!Object.keys(out.headers).length) delete out.headers; }
+  }
+  if (t === "http"){
+    const h = $(prefix + "TransHosts").value.trim();
+    if (h) out.host = h.split(",").map(s=>s.trim()).filter(Boolean); else delete out.host;
+  }
+  if (t === "grpc"){
+    const s = $(prefix + "TransSvc").value.trim();
+    if (s) out.service_name = s; else delete out.service_name;
+  }
+  return out;
+}
+
+/* ----- 区块渲染与默认值 ----- */
+function renderDynSections(prefix, type, values){
+  const meta = metaOf(type);
+  const dir = prefix === "in" ? "inbound" : "outbound";
+  dynForms[prefix] = {meta, dir};
+  formState[prefix] = {settings: asObj(values.settings), tls: asObj(values.tls), transport: asObj(values.transport)};
+  $(prefix + "DynSettings").innerHTML = settingsHTML(prefix, meta, dir, formState[prefix].settings);
+  $(prefix + "DynSecurity").innerHTML = securityHTML(prefix, meta, formState[prefix].tls, dir);
+  $(prefix + "DynTransport").innerHTML = transportHTML(prefix, formState[prefix].transport);
+  $(prefix + "SecMode").addEventListener("change", ()=>syncSecFields(prefix));
+  $(prefix + "TransType").addEventListener("change", ()=>syncTransFields(prefix));
+  syncSecFields(prefix); syncTransFields(prefix);
+  const gen = $(prefix + "RealityGen");
+  if (gen) gen.addEventListener("click", async ()=>{
+    try{
+      const kp = await api("tools/reality-keypair", {method: "POST"});
+      $(prefix + "RealityKey").value = kp.private_key;
+      $(prefix + "RealityPub").textContent = "公钥（订阅会自动带上）：" + kp.public_key;
+    }catch(e){ toast(e.message); }
+  });
 }
 async function applyInboundDefaults(type){
-  const d = (protocolDefaults[type] || {}).inbound; if (!d) return;
+  const d = (protocolDefaults[type] || {}).inbound;
+  if (!d){ renderDynSections("in", type, {}); return; }
   if (d.port){
     // 默认端口已被已有入站占用时自动顺延（后端保存时也会再避让一次）。
     let p = d.port;
@@ -303,25 +529,22 @@ async function applyInboundDefaults(type){
     while (used.has(p) && p < 65535) p++;
     $("inPort").value = p;
   }
-  fillJSONField("inSettings", d.settings);
-  fillJSONField("inTLS", d.tls);
-  fillJSONField("inTransport", d.transport);
-  const hint = $("inRealityHint"); if (hint) hint.textContent = "";
-  if (type === "vless"){
+  const tls = asObj(d.tls);
+  if (type === "vless" && tls.reality){
     try{
-      const kp = await api("tools/reality-keypair", {method:"POST"});
-      const tls = d.tls ? JSON.parse(JSON.stringify(d.tls)) : {};
-      if (tls.reality) tls.reality.private_key = kp.private_key;
-      fillJSONField("inTLS", tls);
-      if (hint) hint.textContent = "已自动生成 Reality 密钥对。公钥（客户端连接用，订阅会自动带上）：" + kp.public_key;
+      const kp = await api("tools/reality-keypair", {method: "POST"});
+      tls.reality.private_key = kp.private_key;
+      renderDynSections("in", type, {settings: d.settings, tls, transport: d.transport});
+      const pub = $("inRealityPub");
+      if (pub) pub.textContent = "公钥（订阅会自动带上）：" + kp.public_key;
+      return;
     }catch(e){}
   }
+  renderDynSections("in", type, {settings: d.settings, tls, transport: d.transport});
 }
 function applyOutboundDefaults(type){
-  const d = (protocolDefaults[type] || {}).outbound; if (!d) return;
-  fillJSONField("outSettings", d.settings);
-  fillJSONField("outTLS", d.tls);
-  fillJSONField("outTransport", d.transport);
+  const d = (protocolDefaults[type] || {}).outbound;
+  renderDynSections("out", type, d ? {settings: d.settings, tls: d.tls, transport: d.transport} : {});
 }
 function protoOptions(dir, selected){
   return protocols.filter(p=>!p.directions || p.directions.includes(dir))
@@ -374,15 +597,16 @@ async function inboundForm(i){ await ensureCerts();
     <label>绑定证书（可选）</label><select id="inCert">${certOptions(i.cert_id)}</select>
     <p class="small" style="margin:4px 0 2px">证书是给 TLS 加密用的。trojan / hysteria2 / tuic / anytls 必须有证书：<b>不绑定也能直接保存并应用</b>，面板会自动生成一张自签证书顶上（在「证书」页能看到，客户端连接时需开启「允许不安全」）；绑定你自己的正式证书则免去这一步，证书路径会自动注入下面的 TLS 配置。</p>
     <div class="check"><input type="checkbox" id="inUser" ${i.is_user_inbound?"checked":""}><span>用户入口（自动注入客户端用户）</span></div>
-    ${jsonField("协议参数 Settings", "inSettings", i.settings, "协议自身的参数（流控、带宽、混淆密码等）。新建时已按所选协议自动填好默认值，一般无需修改。")}
-    ${jsonField("TLS / Reality 加密配置", "inTLS", i.tls, "加密层配置。vless 的 Reality 私钥在新建时自动生成；普通 TLS 协议不绑证书时，应用配置会自动补自签证书路径，这里只需保留 enabled 与 server_name。")}
-    <p class="small" id="inRealityHint"></p>
-    ${jsonField("传输层 Transport", "inTransport", i.transport, "ws / grpc 等传输方式的参数；普通 TCP 直连留空即可。")}
+    <div id="inDynSettings"></div>
+    <div id="inDynSecurity"></div>
+    <div id="inDynTransport"></div>
     ${modalActions()}
   </form>`);
   if (!i.id){
     applyInboundDefaults(i.type);
     $("inType").addEventListener("change", ()=>applyInboundDefaults($("inType").value));
+  } else {
+    renderDynSections("in", i.type, {settings: i.settings, tls: i.tls, transport: i.transport});
   }
   $("inForm").addEventListener("submit", async (e)=>{
     e.preventDefault();
@@ -390,7 +614,9 @@ async function inboundForm(i){ await ensureCerts();
       const body = {name: $("inName").value.trim(), type: $("inType").value, port: Number($("inPort").value),
         listen: $("inListen").value.trim(), status: $("inStatus").value, is_user_inbound: $("inUser").checked,
         cert_id: $("inCert").value || null,
-        settings: parseJSONField("inSettings"), tls: parseJSONField("inTLS"), transport: parseJSONField("inTransport")};
+        settings: emptyToUndef(collectSettings("in", formState.in.settings)),
+        tls: emptyToUndef(collectSecurity("in", formState.in.tls, "inbound")),
+        transport: emptyToUndef(collectTransport("in", formState.in.transport))};
       if (i.id) await api("inbounds/" + i.id, {method:"PUT", body}); else await api("inbounds", {method:"POST", body});
       closeModal(); toast("入站已保存，记得应用配置"); loadInbounds();
     }catch(err){ toast(err.message); }
@@ -422,20 +648,24 @@ function outboundForm(o){
     <div class="row"><div><label>名称（tag）</label><input id="outName" value="${esc(o.name)}" required></div>
     <div><label>协议</label><select id="outType">${protoOptions("outbound", o.type)}</select></div></div>
     <label>状态</label><select id="outStatus">${statusOptions(o.status)}</select>
-    ${jsonField("协议参数 Settings", "outSettings", o.settings, "出站协议的参数（服务器地址、端口、UUID/密码等）。新建时已按所选协议预填模板，把服务器信息补齐即可。")}
-    ${jsonField("TLS / Reality 加密配置", "outTLS", o.tls)}
-    ${jsonField("传输层 Transport", "outTransport", o.transport)}
+    <div id="outDynSettings"></div>
+    <div id="outDynSecurity"></div>
+    <div id="outDynTransport"></div>
     ${modalActions()}
   </form>`);
   if (!o.id){
     applyOutboundDefaults(o.type);
     $("outType").addEventListener("change", ()=>applyOutboundDefaults($("outType").value));
+  } else {
+    renderDynSections("out", o.type, {settings: o.settings, tls: o.tls, transport: o.transport});
   }
   $("outForm").addEventListener("submit", async (e)=>{
     e.preventDefault();
     try{
       const body = {name: $("outName").value.trim(), type: $("outType").value, status: $("outStatus").value,
-        settings: parseJSONField("outSettings"), tls: parseJSONField("outTLS"), transport: parseJSONField("outTransport")};
+        settings: emptyToUndef(collectSettings("out", formState.out.settings)),
+        tls: emptyToUndef(collectSecurity("out", formState.out.tls, "outbound")),
+        transport: emptyToUndef(collectTransport("out", formState.out.transport))};
       if (o.id) await api("outbounds/" + o.id, {method:"PUT", body}); else await api("outbounds", {method:"POST", body});
       closeModal(); toast("出站已保存，记得应用配置"); loadOutbounds();
     }catch(err){ toast(err.message); }
@@ -489,7 +719,8 @@ window.exportSub = async (id)=>{
   <p class="small" style="text-align:center;margin:0 0 6px">用客户端 App 扫码导入</p>
   <div class="actions"><button type="button" onclick="closeModal()">关闭</button>
   <button type="button" id="subDlBtn">下载订阅地址</button>
-  <button class="primary" type="button" id="subCopyBtn">复制订阅地址</button></div>`);
+  <button class="primary" type="button" id="subCopyBtn">复制订阅地址</button></div>
+  <div id="subNodes" style="margin-top:18px"><p class="small">正在加载单个节点…</p></div>`);
   $("subCopyBtn").addEventListener("click", ()=>copyText(url));
   $("subDlBtn").addEventListener("click", ()=>{
     const blob = new Blob([url + "\n"], {type:"text/plain;charset=utf-8"});
@@ -507,11 +738,56 @@ window.exportSub = async (id)=>{
     const blob = await res.blob();
     $("subExportQR").src = URL.createObjectURL(blob);
   }catch(e){ const img = $("subExportQR"); if (img) img.alt = "二维码生成失败，可直接复制地址"; }
+  loadExportNodes(id, c);
+};
+/* 单个节点导出：逐条链接来自 /clients/:id/links（与订阅内容一致）。 */
+async function loadExportNodes(id, c){
+  const box = $("subNodes"); if (!box) return;
+  try{
+    const nodes = await api("clients/" + id + "/links");
+    if (!nodes.length){ box.innerHTML = '<p class="small">该客户端暂无可导出的节点（检查入站是否启用、客户端是否绑定了入站）。</p>'; return; }
+    window._exportNodes = nodes;
+    window._exportClient = c;
+    box.innerHTML = `<label>单个节点（逐条导出）</label>` + nodes.map((n, ix)=>`
+      <div class="row" style="align-items:center;gap:8px;margin:6px 0">
+        <div style="flex:1;min-width:0"><b>${esc(n.name)}</b> <span class="badge">${esc(n.type)}</span>
+        <div class="small mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(n.uri)}">${esc(n.uri)}</div></div>
+        <button type="button" onclick="copyNodeLink(${ix})">复制</button>
+        <button type="button" onclick="qrNodeLink(${ix})">二维码</button>
+      </div>`).join("") +
+      `<div class="actions"><button type="button" id="dlAllNodes">下载全部节点 (.txt)</button></div>`;
+    $("dlAllNodes").addEventListener("click", ()=>{
+      const blob = new Blob([nodes.map(n=>n.uri).join("\n") + "\n"], {type: "text/plain;charset=utf-8"});
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = ((c && c.email) || "client").replace(/[\\/:*?"<>|]/g, "_") + "-节点.txt";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+      toast("节点链接已下载");
+    });
+  }catch(e){ box.innerHTML = '<p class="small">节点列表加载失败：' + esc(e.message) + '</p>'; }
+}
+window.copyNodeLink = (ix)=>{
+  const n = (window._exportNodes || [])[ix]; if (n) copyText(n.uri);
+};
+window.qrNodeLink = async (ix)=>{
+  const n = (window._exportNodes || [])[ix]; if (!n) return;
+  try{
+    const res = await fetch("api/tools/qrcode?text=" + encodeURIComponent(n.uri),
+      {headers: token ? {"Authorization": "Bearer " + token} : {}});
+    if (!res.ok) throw new Error("qr");
+    const blob = await res.blob();
+    const img = $("subExportQR");
+    if (img){ img.src = URL.createObjectURL(blob); img.scrollIntoView({block: "center"}); }
+    toast("上方二维码已切换为节点「" + n.name + "」");
+  }catch(e){ toast("二维码生成失败，可直接复制链接"); }
 };
 function clientForm(c){
-  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, uuid:"", sub_id:""};
-  const inboundOpts = [`<option value="">全部用户入口入站</option>`].concat(
-    inboundCache.map(i=>`<option value="${i.id}" ${c.inbound_id===i.id?"selected":""}>${esc(i.name)}（${esc(i.type)}:${i.port}）</option>`)).join("");
+  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, inbound_ids:[], uuid:"", sub_id:""};
+  const selIDs = (Array.isArray(c.inbound_ids) && c.inbound_ids.length) ? c.inbound_ids : (c.inbound_id ? [c.inbound_id] : []);
+  const userIns = inboundCache.filter(i=>i.is_user_inbound);
+  const inboundChecks = userIns.length ? userIns.map(i=>`<label class="check" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="clInSel" value="${i.id}" ${selIDs.includes(i.id)?"checked":""}><span>${esc(i.name)}（${esc(i.type)}:${i.port}）</span></label>`).join("")
+    : '<span class="small">暂无用户入口入站，请先到「入站」页新建并勾选用户入口。</span>';
   const dtVal = c.expiry_time ? new Date(c.expiry_time*1000 - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16) : "";
   openModal(`<h3>${c.id?"编辑客户端":"新建客户端"}</h3>
   <form id="clForm">
@@ -519,8 +795,9 @@ function clientForm(c){
     <div class="row"><div><label>流量上限 GB（0=无限）</label><input id="clTotal" type="number" min="0" value="${c.total_gb||0}"></div>
     <div><label>IP 数限制（0=不限）</label><input id="clLimitIP" type="number" min="0" value="${c.limit_ip||0}"></div></div>
     <div class="row"><div><label>到期时间（留空=永不过期）</label><input id="clExpiry" type="datetime-local" value="${dtVal}"></div>
-    <div><label>绑定入站</label><select id="clInbound">${inboundOpts}</select></div></div>
-    <label>备注</label><input id="clComment" value="${esc(c.comment||"")}">
+    <div><label>备注</label><input id="clComment" value="${esc(c.comment||"")}"></div></div>
+    <label>可用入站（可多选；一个都不勾 = 全部用户入口入站）</label>
+    <div style="margin:2px 0 8px">${inboundChecks}</div>
     <div class="row"><div><label>UUID（留空自动生成）</label><input id="clUUID" value="${esc(c.uuid||"")}" class="mono"></div>
     <div><label>订阅 ID（留空自动生成）</label><input id="clSubID" value="${esc(c.sub_id||"")}" class="mono"></div></div>
     <label>协议密码（留空自动生成；trojan/ss/hysteria2 等使用）</label><input id="clPass" value="${esc(c.password||"")}" class="mono">
@@ -532,10 +809,11 @@ function clientForm(c){
     try{
       const exp = $("clExpiry").value ? Math.floor(new Date($("clExpiry").value).getTime()/1000) : 0;
       const pwVal = $("clPass").value;
+      const sel = Array.from(document.querySelectorAll(".clInSel:checked")).map(x=>x.value);
       const body = {email: $("clEmail").value.trim(), enable: $("clEnable").checked,
         total_gb: Number($("clTotal").value)||0, limit_ip: Number($("clLimitIP").value)||0,
         expiry_time: exp, comment: $("clComment").value.trim(),
-        inbound_id: $("clInbound").value || null,
+        inbound_ids: sel, inbound_id: sel.length ? sel[0] : null,
         uuid: $("clUUID").value.trim(), sub_id: $("clSubID").value.trim()};
       body["pass" + "word"] = pwVal;
       if (c.id) await api("clients/" + c.id, {method:"PUT", body}); else await api("clients", {method:"POST", body});
