@@ -69,6 +69,28 @@ func dataField(t *testing.T, w *httptest.ResponseRecorder) json.RawMessage {
 	return env.Data
 }
 
+func TestPanelIndexServesSPA(t *testing.T) {
+	_, r, _ := testServer(t)
+	// /app（无尾斜杠）应跳转到 /app/，保证相对路径解析正确
+	w := do(r, "GET", "/app", "", "")
+	if w.Code != http.StatusFound {
+		t.Fatalf("GET /app = %d, want 302", w.Code)
+	}
+	w = do(r, "GET", "/app/", "", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /app/ = %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"cx-box", "loginForm", "view-inbounds", "view-clients"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("panel html missing %q", want)
+		}
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("content-type = %s", ct)
+	}
+}
+
 func TestPanelAPIFlow(t *testing.T) {
 	_, r, g := testServer(t)
 
