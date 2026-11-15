@@ -1,6 +1,10 @@
 package sub
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -74,5 +78,34 @@ func TestLinksUnknownAndDisabled(t *testing.T) {
 	}
 	if _, _, err := gen.Links(c.SubID, "example.com"); err == nil {
 		t.Fatal("disabled client should fail")
+	}
+}
+
+func TestDeriveRealityPublic(t *testing.T) {
+	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := base64.RawURLEncoding
+	privStr := enc.EncodeToString(priv.Bytes())
+	wantPub := enc.EncodeToString(priv.PublicKey().Bytes())
+	in := model.Inbound{
+		Name: "vless-in", Type: "vless", Port: 443,
+		TLS: json.RawMessage(`{"enabled":true,"server_name":"www.microsoft.com","reality":{"enabled":true,"private_key":"` + privStr + `","short_id":["ab12"]}}`),
+	}
+	out, err := inboundAsOutbound(in, "203.0.113.7")
+	if err != nil {
+		t.Fatalf("inboundAsOutbound: %v", err)
+	}
+	var tls map[string]any
+	if err := json.Unmarshal(out.TLS, &tls); err != nil {
+		t.Fatal(err)
+	}
+	reality := tls["reality"].(map[string]any)
+	if reality["public_key"] != wantPub {
+		t.Fatalf("public_key = %v, want %v", reality["public_key"], wantPub)
+	}
+	if reality["short_id"] != "ab12" {
+		t.Fatalf("short_id = %v", reality["short_id"])
 	}
 }
