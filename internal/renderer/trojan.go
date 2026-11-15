@@ -126,7 +126,12 @@ func (r *TrojanRenderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) (st
 		q.Set("sni", sni)
 	}
 	if insecureFromTLS(cfg) {
+		// trojan 链接的跳过校验参数有两种拼写：insecure 是 vless/hy2 系
+		// 惯例，allowInsecure 是 trojan 原生惯例（v2rayN 的 Xray 内核只认
+		// 后者，实测只带 insecure 时证书校验失败、连接被客户端重置）。
+		// 两种都下发，解析器会忽略不认识的参数。
 		q.Set("insecure", "1")
+		q.Set("allowInsecure", "1")
 	}
 	return fmt.Sprintf("trojan://%s@%s:%s?%s#%s", user.Password, server, port, q.Encode(), cfg.Name), nil
 }
