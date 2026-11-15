@@ -4,7 +4,9 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +15,7 @@ import (
 	"github.com/sle58083/cx-box/internal/kernel"
 	"github.com/sle58083/cx-box/internal/model"
 	"github.com/sle58083/cx-box/internal/renderer"
+	"github.com/sle58083/cx-box/internal/sub"
 	"github.com/sle58083/cx-box/web"
 )
 
@@ -56,6 +59,7 @@ func (s *Server) registerPanelRoutes(r *gin.Engine, panelPath string) {
 	auth.GET("/clients", s.listClients)
 	auth.POST("/clients", s.createClient)
 	auth.GET("/clients/:id", s.getClient)
+	auth.GET("/clients/:id/links", s.clientLinks)
 	auth.PUT("/clients/:id", s.updateClient)
 	auth.DELETE("/clients/:id", s.deleteClient)
 
@@ -353,8 +357,9 @@ func (s *Server) deleteOutbound(c *gin.Context) {
 // 但管理端需要看到 UUID/密码/订阅 ID 才能运维；本接口在鉴权之后）。
 type clientView struct {
 	model.Client
-	UUID     string `json:"uuid"`
-	Password string `json:"password"`
+	UUID       string   `json:"uuid"`
+	Password   string   `json:"password"`
+	InboundIDs []string `json:"inbound_ids"` // 多选入站（空 = 全部用户入口）
 }
 
 // password 返回请求里携带的客户端密码（单独成方法，避免与模型字段同名混淆）。
@@ -362,7 +367,26 @@ func (v clientView) password() string { return v.Password }
 
 func viewClient(cl *model.Client) clientView {
 	pw := cl.Password
-	return clientView{Client: *cl, UUID: cl.UUID, Password: pw}
+	ids := cl.SelectedInboundIDs()
+	if ids == nil {
+		ids = []string{}
+	}
+	return clientView{Client: *cl, UUID: cl.UUID, Password: pw, InboundIDs: ids}
+}
+
+// applyInboundSelection 把请求里的入站选择落到模型：inbound_ids 出现时（含空
+// 数组 = 不限定）以它为准并同步旧的单选字段；未出现时保留旧单选语义。
+func applyInboundSelection(cl *model.Client, req *clientView) {
+	if req.InboundIDs == nil {
+		return
+	}
+	cl.SetInboundIDs(req.InboundIDs)
+	if len(req.InboundIDs) > 0 {
+		first := req.InboundIDs[0]
+		cl.InboundID = &first
+	} else {
+		cl.InboundID = nil
+	}
 }
 
 func (s *Server) listClients(c *gin.Context) {
@@ -387,6 +411,7 @@ func (s *Server) createClient(c *gin.Context) {
 	cl := req.Client
 	cl.UUID = req.UUID
 	cl.Password = req.password()
+	applyInboundSelection(&cl, &req)
 	cl.ID = model.NewID()
 	if err := s.client.Create(&cl); err != nil {
 		fail(c, http.StatusBadRequest, err)
@@ -420,11 +445,76 @@ func (s *Server) updateClient(c *gin.Context) {
 	cl.CreatedAt = existing.CreatedAt
 	cl.UUID = req.UUID
 	cl.Password = req.password()
+	applyInboundSelection(&cl, &req)
+	if req.InboundIDs == nil {
+		cl.InboundIDs = existing.InboundIDs // 未携带多选字段的更新不清空已有多选
+	}
 	if err := s.client.Update(&cl); err != nil {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
 	ok(c, viewClient(&cl))
+}
+
+// clientLinks 返回某客户端的逐条节点链接（单个节点导出用），内容与订阅一致，
+// 主机名按本次请求推导（与 /sub 下发同一套 requestHost 逻辑）。
+func (s *Server) clientLinks(c *gin.Context) {
+	cl, err := s.client.Get(c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusNotFound, err)
+		return
+	}
+	gen := sub.New(s.db)
+	links, _, err := gen.Links(cl.SubID, requestHost(c))
+	if err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	type nodeLink struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+		URI  string `json:"uri"`
+	}
+	out := make([]nodeLink, 0, len(links))
+	for _, uri := range links {
+		name, typ := parseLinkMeta(uri)
+		out = append(out, nodeLink{Name: name, Type: typ, URI: uri})
+	}
+	ok(c, out)
+}
+
+// parseLinkMeta 从分享链接提取展示用的名称与协议：名称取 # 片段（vmess 取
+// base64 JSON 里的 ps），协议取 scheme（hy2 规范成 hysteria2）。
+func parseLinkMeta(uri string) (string, string) {
+	scheme, rest, _ := strings.Cut(uri, "://")
+	typ := scheme
+	if typ == "hy2" {
+		typ = "hysteria2"
+	}
+	if typ == "ss" {
+		typ = "shadowsocks"
+	}
+	if scheme == "vmess" {
+		raw, err := base64.StdEncoding.DecodeString(rest)
+		if err != nil {
+			raw, err = base64.RawStdEncoding.DecodeString(rest)
+		}
+		if err == nil {
+			var j struct {
+				Ps string `json:"ps"`
+			}
+			if json.Unmarshal(raw, &j) == nil && j.Ps != "" {
+				return j.Ps, typ
+			}
+		}
+		return typ, typ
+	}
+	if i := strings.LastIndex(uri, "#"); i >= 0 && i+1 < len(uri) {
+		if name, err := url.PathUnescape(uri[i+1:]); err == nil && name != "" {
+			return name, typ
+		}
+	}
+	return typ, typ
 }
 
 func (s *Server) deleteClient(c *gin.Context) {
