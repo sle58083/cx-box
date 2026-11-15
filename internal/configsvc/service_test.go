@@ -3,6 +3,7 @@ package configsvc
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"gorm.io/gorm"
@@ -144,5 +145,49 @@ func TestGenerateDisabledInboundFiltered(t *testing.T) {
 	}
 	if got[0]["tag"] != "on" {
 		t.Errorf("期望 tag=on，实际 %v", got[0]["tag"])
+	}
+}
+
+func TestGenerateInjectsBoundCertPaths(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	cert := &model.Certificate{
+		Name: "ss", Type: "self_signed", Status: "valid",
+		CertPEM: "-----BEGIN CERTIFICATE-----\ndummy\n-----END CERTIFICATE-----\n",
+		KeyPEM:  "-----BEGIN PRIVATE KEY-----\ndummy\n-----END PRIVATE KEY-----\n",
+	}
+	if err := svc.db.Create(cert).Error; err != nil {
+		t.Fatal(err)
+	}
+	certID := cert.ID.String()
+	in := &model.Inbound{
+		Name: "hy2", Type: "hysteria2", Port: 443, Status: model.StatusEnabled,
+		IsUserInbound: true, CertID: &certID,
+		TLS: json.RawMessage(`{"enabled":true,"server_name":"example.com"}`),
+	}
+	if err := svc.db.Create(in).Error; err != nil {
+		t.Fatal(err)
+	}
+	doc, err := svc.Generate(ctx)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	ins := doc["inbounds"].([]map[string]any)
+	if len(ins) != 1 {
+		t.Fatalf("inbounds = %d", len(ins))
+	}
+	tls, ok := ins[0]["tls"].(map[string]any)
+	if !ok {
+		t.Fatalf("tls missing: %v", ins[0])
+	}
+	wantCert, wantKey := svc.kernel.CertPaths(certID)
+	if tls["certificate_path"] != wantCert || tls["key_path"] != wantKey {
+		t.Fatalf("tls paths = %v / %v, want %s / %s", tls["certificate_path"], tls["key_path"], wantCert, wantKey)
+	}
+	if _, err := os.Stat(wantCert); err != nil {
+		t.Fatalf("cert file not written: %v", err)
+	}
+	if fi, err := os.Stat(wantKey); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("key file mode/err: %v %v", fi, err)
 	}
 }
