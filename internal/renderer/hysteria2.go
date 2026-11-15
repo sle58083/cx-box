@@ -35,9 +35,9 @@ func (r *Hysteria2Renderer) RenderInbound(_ *RenderContext, cfg model.Inbound, u
 	} else if t != nil {
 		out[fTLS] = t
 	}
-	if m := str(settings, "masquerade"); m != "" {
-		out["masquerade"] = m
-	}
+	// 带宽与混淆：up_mbps/down_mbps（数字）、ignore_client_bandwidth（布尔）、
+	// obfs（{type:"salamander",password}）、masquerade（字符串或对象）原样透传。
+	passthrough(out, settings, "up_mbps", "down_mbps", "ignore_client_bandwidth", "obfs", "masquerade")
 	return out, nil
 }
 
@@ -54,6 +54,7 @@ func (r *Hysteria2Renderer) RenderOutbound(_ *RenderContext, cfg model.Outbound)
 		out[fServerPort] = v
 	}
 	out[fPassword] = str(settings, fPassword)
+	passthrough(out, settings, "up_mbps", "down_mbps", "obfs")
 
 	if t, err := renderTLS(cfg.TLS); err != nil {
 		return nil, err
@@ -63,6 +64,25 @@ func (r *Hysteria2Renderer) RenderOutbound(_ *RenderContext, cfg model.Outbound)
 	return out, nil
 }
 
+// validateObfs 校验 settings.obfs（存在时）：sing-box 仅支持 salamander 且密码必填。
+func validateObfs(settings map[string]any) error {
+	v, ok := settings["obfs"]
+	if !ok || v == nil {
+		return nil
+	}
+	obfs, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Errorf("hysteria2: settings.obfs 必须是对象 {type, password}")
+	}
+	if t := str(obfs, "type"); t != "salamander" {
+		return fmt.Errorf("hysteria2: settings.obfs.type 仅支持 salamander")
+	}
+	if str(obfs, fPassword) == "" {
+		return fmt.Errorf("hysteria2: settings.obfs.password 不能为空")
+	}
+	return nil
+}
+
 func (r *Hysteria2Renderer) ValidateInbound(cfg model.Inbound) error {
 	if cfg.Port <= 0 || cfg.Port > 65535 {
 		return fmt.Errorf("hysteria2 inbound: listen_port 必须在 1-65535")
@@ -70,12 +90,15 @@ func (r *Hysteria2Renderer) ValidateInbound(cfg model.Inbound) error {
 	if err := validateInboundTLSCommon(cfg, []TLSMode{TLSModePlain}, true); err != nil {
 		return err
 	}
-	if cfg.IsUserInbound {
-		return nil
-	}
 	settings, err := parseMap(cfg.Settings)
 	if err != nil {
 		return err
+	}
+	if err := validateObfs(settings); err != nil {
+		return err
+	}
+	if cfg.IsUserInbound {
+		return nil
 	}
 	us := parseUsers(settings)
 	if len(us) == 0 {
@@ -100,6 +123,9 @@ func (r *Hysteria2Renderer) ValidateOutbound(cfg model.Outbound) error {
 	if str(settings, fPassword) == "" {
 		return fmt.Errorf("hysteria2 outbound: password 必填")
 	}
+	if err := validateObfs(settings); err != nil {
+		return err
+	}
 	return validateOutboundTLSCommon(cfg, []TLSMode{TLSModePlain}, true)
 }
 
@@ -115,6 +141,14 @@ func (r *Hysteria2Renderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) 
 	q := url.Values{}
 	if sni := sniFromTLS(cfg); sni != "" {
 		q.Set("sni", sni)
+	}
+	if obfs, ok := settings["obfs"].(map[string]any); ok {
+		if t := str(obfs, "type"); t != "" {
+			q.Set("obfs", t)
+		}
+		if p := str(obfs, fPassword); p != "" {
+			q.Set("obfs-password", p)
+		}
 	}
 	return fmt.Sprintf("hysteria2://%s@%s:%s?%s#%s", url.PathEscape(user.Password), server, port, q.Encode(), cfg.Name), nil
 }
