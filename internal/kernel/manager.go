@@ -59,6 +59,27 @@ func (m *Manager) ConfigPath() string {
 // SetConfigPath 覆盖配置路径。
 func (m *Manager) SetConfigPath(p string) { m.configPath = p }
 
+// CertPaths 返回证书落盘路径（etc/certs/<id>.crt 与 .key）。
+func (m *Manager) CertPaths(id string) (certFile, keyFile string) {
+	dir := filepath.Join(m.dataDir, "etc", "certs")
+	return filepath.Join(dir, id+".crt"), filepath.Join(dir, id+".key")
+}
+
+// WriteCert 把证书/私钥 PEM 落盘（私钥 0600），供 sing-box TLS 引用。
+func (m *Manager) WriteCert(id, certPEM, keyPEM string) error {
+	certFile, keyFile := m.CertPaths(id)
+	if err := os.MkdirAll(filepath.Dir(certFile), 0o755); err != nil {
+		return fmt.Errorf("kernel: 创建证书目录失败: %w", err)
+	}
+	if err := os.WriteFile(certFile, []byte(certPEM), 0o644); err != nil {
+		return fmt.Errorf("kernel: 写证书失败: %w", err)
+	}
+	if err := os.WriteFile(keyFile, []byte(keyPEM), 0o600); err != nil {
+		return fmt.Errorf("kernel: 写私钥失败: %w", err)
+	}
+	return nil
+}
+
 // DefaultDownloadURL 返回当前平台 sing-box 官方 Release 包地址。
 // 官方资产形如 sing-box-<ver>-linux-amd64.tar.gz（包内文件夹含 sing-box 二进制）。
 func (m *Manager) DefaultDownloadURL() string {
