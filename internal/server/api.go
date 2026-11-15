@@ -9,6 +9,7 @@ import (
 	"github.com/sle58083/cx-box/internal/kernel"
 	"github.com/sle58083/cx-box/internal/model"
 	"github.com/sle58083/cx-box/internal/renderer"
+	"github.com/sle58083/cx-box/web"
 )
 
 const sessionCookie = "cxbox_session"
@@ -51,12 +52,14 @@ func (s *Server) registerPanelRoutes(r *gin.Engine, panelPath string) {
 	auth.DELETE("/clients/:id", s.deleteClient)
 }
 
-// panelIndex 面板首页占位（正式前端在后续阶段以 embed 方式接入同一路径）。
+// panelIndex 下发内嵌的面板单页应用（web/index.html，登录与管理界面）。
 func (s *Server) panelIndex(c *gin.Context) {
-	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(
-		`<!doctype html><meta charset="utf-8"><title>cx-box</title>`+
-			`<h1>cx-box 面板 API 已运行</h1><p>版本 `+Version+
-			`。管理接口位于本路径下的 <code>api/</code>（需登录）。网页版前端即将推出。</p>`))
+	// 无尾斜杠访问（/app）时先跳到 /app/，保证页面内相对路径 api/... 解析正确。
+	if !strings.HasSuffix(c.Request.URL.Path, "/") {
+		c.Redirect(http.StatusFound, c.Request.URL.Path+"/")
+		return
+	}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", web.IndexHTML)
 }
 
 // ---- 通用响应 ----
