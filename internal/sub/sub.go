@@ -118,6 +118,11 @@ func inboundAsOutbound(in model.Inbound, host string) (model.Outbound, error) {
 		if err := json.Unmarshal(in.Settings, &settings); err != nil {
 			return model.Outbound{}, fmt.Errorf("sub: 入站 %s 的 settings 不是合法 JSON: %w", in.Name, err)
 		}
+		// settings 存的是 JSON 字面量 null 时 map 会被置 nil，
+		// 下面注入 server/server_port 就会 panic（真机踩中）。
+		if settings == nil {
+			settings = map[string]any{}
+		}
 	}
 	settings["server"] = host
 	settings["server_port"] = in.Port
