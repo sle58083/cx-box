@@ -57,7 +57,7 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 		}
 		var users []renderer.ProxyUser
 		if cfg.IsUserInbound {
-			users = ctx.ProxyUsers
+			users = usersForInbound(ctx.ProxyUsers, cfg.ID.String())
 		}
 		el, err := r.RenderInbound(&renderer.RenderContext{Ctx: context.Background(), Users: users}, cfg, users)
 		if err != nil {
@@ -112,6 +112,26 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 	global.RouteFinal = resolveRouteFinal(outbounds)
 	applyGlobalTemplate(doc, global, ctx.Rules)
 	return doc, nil
+}
+
+// usersForInbound 过滤出可注入某个入站的客户端：未做入站选择的（InboundIDs
+// 为空）适用全部用户入口入站；做了多选/单选的只注入被选中的入站，与订阅侧
+// targetInbounds 的判定保持一致（同一份 SelectedInboundIDs 语义）。
+func usersForInbound(users []renderer.ProxyUser, inboundID string) []renderer.ProxyUser {
+	out := make([]renderer.ProxyUser, 0, len(users))
+	for _, u := range users {
+		if len(u.InboundIDs) == 0 {
+			out = append(out, u)
+			continue
+		}
+		for _, id := range u.InboundIDs {
+			if id == inboundID {
+				out = append(out, u)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // assertUniqueTags 断言 inbounds[] 与 outbounds[] 的 tag 全局唯一。
