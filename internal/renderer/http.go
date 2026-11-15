@@ -6,15 +6,32 @@ import (
 	"github.com/sle58083/cx-box/internal/model"
 )
 
-// HTTPRenderer 实现 http 出站渲染（代理 IP 的另一主流协议：HTTP / HTTPS 代理）。
-// 只支持出站方向；HTTPS 代理通过出站 TLS 配置启用（仅普通 TLS，不支持 Reality/ECH），
-// 入站方向与订阅 URI 返回 ErrUnsupported。
+// HTTPRenderer 实现 http 协议渲染（双向）：
+//   - 出站：把买来的 HTTP / HTTPS 代理 IP 作为落地出口（HTTPS 走出站 TLS）；
+//   - 入站：本机开一个 HTTP 代理端口供局域网设备/软件连接（网关式入站，
+//     账号在 settings.users 里静态配置，不绑定面板客户端）；入站开启 TLS
+//     即为 HTTPS 代理（证书可绑面板证书或应用时自动生成）。订阅 URI 返回 ErrUnsupported。
 type HTTPRenderer struct{}
 
 func (r *HTTPRenderer) Protocol() string { return "http" }
 
-func (r *HTTPRenderer) RenderInbound(_ *RenderContext, _ model.Inbound, _ []ProxyUser) (map[string]any, error) {
-	return nil, ErrUnsupported
+func (r *HTTPRenderer) RenderInbound(_ *RenderContext, cfg model.Inbound, _ []ProxyUser) (map[string]any, error) {
+	out := map[string]any{}
+	renderInboundCommon(out, cfg)
+
+	settings, err := parseMap(cfg.Settings)
+	if err != nil {
+		return nil, err
+	}
+	if us := proxyUsers(settings); len(us) > 0 {
+		out[fUsers] = us
+	}
+	if t, err := renderTLS(cfg.TLS); err != nil {
+		return nil, err
+	} else if t != nil {
+		out[fTLS] = t
+	}
+	return out, nil
 }
 
 func (r *HTTPRenderer) RenderOutbound(_ *RenderContext, cfg model.Outbound) (map[string]any, error) {
@@ -48,7 +65,19 @@ func (r *HTTPRenderer) RenderOutbound(_ *RenderContext, cfg model.Outbound) (map
 	return out, nil
 }
 
-func (r *HTTPRenderer) ValidateInbound(model.Inbound) error { return ErrUnsupported }
+func (r *HTTPRenderer) ValidateInbound(cfg model.Inbound) error {
+	if cfg.Port <= 0 || cfg.Port > 65535 {
+		return fmt.Errorf("http inbound: listen_port 必须在 1-65535")
+	}
+	if err := validateInboundTLSCommon(cfg, []TLSMode{TLSModePlain}, false); err != nil {
+		return err
+	}
+	settings, err := parseMap(cfg.Settings)
+	if err != nil {
+		return err
+	}
+	return validateProxyUsers("http", settings)
+}
 
 func (r *HTTPRenderer) ValidateOutbound(cfg model.Outbound) error {
 	settings, err := parseMap(cfg.Settings)
@@ -74,8 +103,12 @@ func (r *HTTPRenderer) SubscriptionURI(model.Outbound, ProxyUser) (string, error
 func (r *HTTPRenderer) Meta() ProtocolMeta {
 	return ProtocolMeta{
 		Protocol:   "http",
-		Directions: []Direction{DirectionOutbound},
+		Directions: []Direction{DirectionInbound, DirectionOutbound},
 		TLSAllowed: []TLSMode{TLSModeNone, TLSModePlain},
+		Inbound: []FieldSchema{
+			{Key: "users", Label: "账号列表", Type: "array", Required: false,
+				Help: "每项 {username, password}；留空表示无认证（任何人可连，仅建议内网使用）"},
+		},
 		Outbound: []FieldSchema{
 			{Key: "server", Label: "代理地址", Type: "text", Required: true},
 			{Key: "server_port", Label: "代理端口", Type: "number", Required: true},
