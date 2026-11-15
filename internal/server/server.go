@@ -20,7 +20,7 @@ import (
 )
 
 // Version 是面板版本号（随发布递增）。
-const Version = "0.3.0"
+const Version = "0.4.0"
 
 // Server 是 cx-box 的 HTTP 服务器。
 type Server struct {
@@ -31,6 +31,7 @@ type Server struct {
 	inbound  *service.InboundService
 	outbound *service.OutboundService
 	client   *service.ClientService
+	cert     *service.CertificateService
 	km       *kernel.Manager    // 可为 nil（内核未就绪时面板仍可用）
 	cfg      *configsvc.Service // 可为 nil（同上）
 	sessions *sessionStore
@@ -46,6 +47,7 @@ func New(g *gorm.DB, km *kernel.Manager, cfg *configsvc.Service) *Server {
 		inbound:  service.NewInboundService(g),
 		outbound: service.NewOutboundService(g),
 		client:   service.NewClientService(g),
+		cert:     service.NewCertificateService(g),
 		km:       km,
 		cfg:      cfg,
 		sessions: newSessionStore(),
