@@ -52,6 +52,12 @@ func (s *Service) Generate(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 
+	// 证书绑定解析：入站绑了 cert_id 时把证书落盘，并把路径注入其 TLS
+	// （TLS 里已显式写了 certificate_path/key_path 的不覆盖）。
+	if err := s.resolveCertBindings(ctx, inbounds); err != nil {
+		return nil, err
+	}
+
 	return s.generator.Generate(&NodeConfigContext{
 		Global:     DefaultGlobalSettings(),
 		Inbounds:   inbounds,
@@ -85,6 +91,42 @@ func (s *Service) Apply(ctx context.Context) error {
 		return err
 	}
 	return s.kernel.Restart(ctx)
+}
+
+// resolveCertBindings 把入站的证书绑定落盘并注入 TLS 证书路径（就地修改 inbounds）。
+func (s *Service) resolveCertBindings(ctx context.Context, inbounds []model.Inbound) error {
+	for i := range inbounds {
+		certID := inbounds[i].CertID
+		if certID == nil || *certID == "" || s.kernel == nil {
+			continue
+		}
+		var cert model.Certificate
+		if err := s.db.WithContext(ctx).First(&cert, "id = ?", *certID).Error; err != nil {
+			return fmt.Errorf("configsvc: 入站 %q 绑定的证书不存在: %s", inbounds[i].Name, *certID)
+		}
+		if err := s.kernel.WriteCert(cert.ID.String(), cert.CertPEM, cert.KeyPEM); err != nil {
+			return err
+		}
+		certFile, keyFile := s.kernel.CertPaths(cert.ID.String())
+		tls := map[string]any{}
+		if len(inbounds[i].TLS) > 0 {
+			if err := json.Unmarshal(inbounds[i].TLS, &tls); err != nil {
+				return fmt.Errorf("configsvc: 入站 %q 的 TLS 不是合法 JSON: %w", inbounds[i].Name, err)
+			}
+		}
+		if _, ok := tls["certificate_path"]; !ok {
+			tls["certificate_path"] = certFile
+		}
+		if _, ok := tls["key_path"]; !ok {
+			tls["key_path"] = keyFile
+		}
+		raw, err := json.Marshal(tls)
+		if err != nil {
+			return err
+		}
+		inbounds[i].TLS = raw
+	}
+	return nil
 }
 
 // activeUsers 返回启用状态的客户端（转为 renderer.ProxyUser）。
