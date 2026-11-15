@@ -1,7 +1,7 @@
 #!/bin/bash
 # 构建 cx-box 发布包：cx-box-linux-<arch>.tar.gz
 # 包内布局（install.sh 按此布局解压安装）：
-#   cx-box/sui            Go 二进制
+#   cx-box/cx-box         Go 二进制
 #   cx-box/cx-box.sh      管理脚本（安装到 /usr/bin/cx-box）
 #   cx-box/cx-box.service systemd 单元
 #
@@ -30,12 +30,12 @@ PKG="${OUT}/cx-box"
 rm -rf "$PKG"
 mkdir -p "$PKG"
 
-echo "building sui for linux/${ARCH} (version ${VERSION})..."
+echo "building cx-box for linux/${ARCH} (version ${VERSION})..."
 CGO_ENABLED=0 GOOS=linux GOARCH="$GOARCH" GOARM="$GOARM" \
-    go build -trimpath -ldflags "-s -w" -o "${PKG}/sui" ./cmd/sui
+    go build -trimpath -ldflags "-s -w" -o "${PKG}/cx-box" ./cmd/cx-box
 
 cp cx-box.sh cx-box.service "$PKG/"
-chmod +x "${PKG}/sui" "${PKG}/cx-box.sh"
+chmod +x "${PKG}/cx-box" "${PKG}/cx-box.sh"
 
 tar -czf "${OUT}/cx-box-linux-${ARCH}.tar.gz" -C "$OUT" cx-box
 echo "done: ${OUT}/cx-box-linux-${ARCH}.tar.gz"
