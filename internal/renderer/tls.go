@@ -110,6 +110,18 @@ func sniFromTLS(cfg model.Outbound) string {
 	return str(m, fServerName)
 }
 
+// insecureFromTLS 提取订阅视图里的「跳过证书校验」标记：入站生效证书为自签时
+// 由 sub 包注入 tls.insecure=true，各协议 SubscriptionURI 据此输出 insecure 参数。
+// 真实出站的 TLS 配置不会带这个键，不影响出站渲染。
+func insecureFromTLS(cfg model.Outbound) bool {
+	m, err := tlsMap(cfg.TLS)
+	if err != nil || m == nil {
+		return false
+	}
+	v, _ := m["insecure"].(bool)
+	return v
+}
+
 // validateOutboundTLSCommon 是出站 TLS 的通用组合校验（协议 renderer 复用）。
 func validateOutboundTLSCommon(cfg model.Outbound, allowed []TLSMode, required bool) error {
 	return validateTLS(cfg.TLS, allowed, required)
