@@ -46,3 +46,22 @@ func TestNameUniqueAcrossInOut(t *testing.T) {
 		t.Fatalf("update keeping own name should pass: %v", err)
 	}
 }
+
+// TestNormalizeNullRawJSON 客户端把空字段发成 JSON null 时，落库前要归一
+// 为空，否则读取方 Unmarshal 出 nil map 会 panic。
+func TestNormalizeNullRawJSON(t *testing.T) {
+	svc := NewInboundService(newCRUDTestDB(t))
+	in := &model.Inbound{Name: "n1", Type: "vless", Port: 443, IsUserInbound: true,
+		Settings: []byte("null"), TLS: []byte("null"), Transport: []byte("null")}
+	if err := svc.Create(in); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, err := svc.Get(in.ID.String())
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Settings) != 0 || len(got.TLS) != 0 || len(got.Transport) != 0 {
+		t.Fatalf("null raw fields should be normalized to empty, got settings=%s tls=%s transport=%s",
+			got.Settings, got.TLS, got.Transport)
+	}
+}
