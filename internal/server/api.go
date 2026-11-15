@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/sle58083/cx-box/internal/kernel"
 	"github.com/sle58083/cx-box/internal/model"
@@ -37,6 +38,7 @@ func (s *Server) registerPanelRoutes(r *gin.Engine, panelPath string) {
 		ok(c, gin.H{"protocols": renderer.Metas(), "defaults": renderer.Defaults()})
 	})
 	auth.POST("/tools/reality-keypair", s.handleRealityKeypair)
+	auth.GET("/tools/qrcode", s.handleQRCode)
 	auth.POST("/apply", s.handleApply)
 
 	auth.GET("/inbounds", s.listInbounds)
@@ -490,6 +492,22 @@ func (s *Server) deleteCertificate(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"deleted": true})
+}
+
+// handleQRCode 把 text 参数渲染成二维码 PNG（订阅导出弹窗用；
+// 本地生成，不把订阅地址发给任何第三方二维码服务）。
+func (s *Server) handleQRCode(c *gin.Context) {
+	text := c.Query("text")
+	if text == "" || len(text) > 2048 {
+		failMsg(c, http.StatusBadRequest, "text 参数必填且长度不超过 2048")
+		return
+	}
+	png, err := qrcode.Encode(text, qrcode.Medium, 256)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.Data(http.StatusOK, "image/png", png)
 }
 
 // handleRealityKeypair 生成一对 Reality（X25519）密钥，编码与 sing-box 一致
