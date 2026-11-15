@@ -101,13 +101,18 @@ func portStr(m map[string]any, key string) string {
 }
 
 // renderInboundCommon 填充 type/tag/listen/listen_port。
-// listen 为空时不下发该键：sing-box 对 "listen": "" 会 ParseAddr 失败，
-// 缺省即监听全部地址，正合单机面板语义（P4 实测踩到）。
+// listen 为空时必须显式下发 "::"（通配）：sing-box 对 "listen": "" 会
+// ParseAddr 失败，而省略 listen 键时 sing-box 1.14 的缺省是只监听
+// 127.0.0.1——外部客户端永远连不上（v0.5.5 及之前全版本踩中，
+// 表现为所有节点测速 -1；本地环回测试发现不了）。P4 注释曾误以为
+// 缺省监听全部地址，是错的。
 func renderInboundCommon(out map[string]any, cfg model.Inbound) {
 	out[fType] = cfg.Type
 	out[fTag] = cfg.Name
 	if cfg.Listen != "" {
 		out[fListen] = cfg.Listen
+	} else {
+		out[fListen] = "::"
 	}
 	out[fListenPort] = cfg.Port
 }
