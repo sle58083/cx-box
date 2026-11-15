@@ -80,7 +80,14 @@ func (s *OutboundService) ensureNameFree(name string, selfID uuid.UUID) error {
 }
 
 // Create 新建出站。
+func normalizeOutbound(ob *model.Outbound) {
+	ob.Settings = normalizeRawJSON(ob.Settings)
+	ob.TLS = normalizeRawJSON(ob.TLS)
+	ob.Transport = normalizeRawJSON(ob.Transport)
+}
+
 func (s *OutboundService) Create(ob *model.Outbound) error {
+	normalizeOutbound(ob)
 	if err := s.validate(ob); err != nil {
 		return err
 	}
@@ -95,6 +102,7 @@ func (s *OutboundService) Create(ob *model.Outbound) error {
 
 // Update 更新出站。
 func (s *OutboundService) Update(ob *model.Outbound) error {
+	normalizeOutbound(ob)
 	if _, err := s.Get(ob.ID.String()); err != nil {
 		return err
 	}
