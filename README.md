@@ -23,7 +23,9 @@ SUI_AUTO=1 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/mai
 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh)
 ```
 
-安装后 `cx-box` 管理命令：启动/停止/重启、改设置、改账号、SSL、BBR 等。
+安装后在服务器上输入 `cx-box` 打开管理菜单（或 `cx-box help` 查看子命令）：安装/更新/卸载、启动/停止/重启、查看日志、改面板设置、改/重置账号、生成 API token、BBR 管理等。彻底清除可用 `bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh) purge`。
+
+发布包由 GitHub Actions 在打 `v*` tag 时构建（`scripts/build-release.sh`），产物为 `cx-box-linux-<arch>.tar.gz`，install.sh 通过 GitHub Releases 下载安装。
 
 ## 默认配置
 
