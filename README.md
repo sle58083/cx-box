@@ -7,6 +7,7 @@ sing-box 单体单机 Web 面板，对标 s-ui。一个 Go 二进制（内嵌前
 - 多协议：VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / ShadowTLS / Naive + XTLS
 - 入站/出站高级配置、流量路由
 - 客户端流量上限与到期时间
+- 流量统计：订阅 sing-box 1.14 官方 api service 的连接事件，按用户实时归因落库（客户端已用流量、小时粒度时序、状态页累计流量）；超额或到期自动从内核配置剔除
 - 系统状态查看（内核运行状态、版本、端口）
 - 订阅服务（link 格式：base64 / 明文 + 流量信息头）
 - 面板路径随机化 + 网页管理界面（登录、状态、入站/出站/客户端/证书管理、设置）
@@ -19,7 +20,7 @@ sing-box 单体单机 Web 面板，对标 s-ui。一个 Go 二进制（内嵌前
 
 ```bash
 # 全自动安装（随机账号密码 + 随机面板路径）
-SUI_AUTO=1 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh)
+CXBOX_AUTO=1 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh)
 
 # 交互式安装
 bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.sh)
@@ -43,7 +44,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/sle58083/cx-box/main/install.s
 
 ```bash
 # 构建（前端是 web/index.html 单文件，经 go:embed 内嵌，无需 Node 构建）
-go build -o sui ./cmd/sui
+go build -o cx-box ./cmd/cx-box
 
 # 测试
 go test ./...
