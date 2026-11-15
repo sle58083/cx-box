@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cx-box 面板</title>
+<style>
+:root{
+  --bg:#f4f6f8; --card:#fff; --ink:#1c2430; --muted:#6b7686; --line:#e3e8ee;
+  --brand:#2563eb; --brand-ink:#fff; --danger:#dc2626; --ok:#16a34a; --warn:#d97706;
+  --side:#111827; --side-ink:#cbd5e1;
+}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink)}
+button{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 14px;font-size:14px}
+button.primary{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+button.danger{color:var(--danger)}
+button:disabled{opacity:.55;cursor:wait}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;color:var(--ink)}
+textarea{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;min-height:74px}
+label{display:block;font-size:12.5px;color:var(--muted);margin:10px 0 4px}
+.hidden{display:none!important}
+
+/* 登录 */
+#loginView{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.login-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px;width:340px;max-width:100%;box-shadow:0 8px 30px rgba(16,24,40,.08)}
+.login-card h1{margin:0 0 4px;font-size:22px}
+.login-card p{margin:0 0 14px;color:var(--muted)}
+.login-card button{width:100%;margin-top:16px;padding:9px}
+.err{color:var(--danger);min-height:20px;margin-top:8px;font-size:13px}
+
+/* 布局 */
+#appView{display:flex;min-height:100vh}
+aside{width:208px;background:var(--side);color:var(--side-ink);padding:18px 12px;flex:none}
+aside .logo{font-size:18px;font-weight:700;color:#fff;padding:2px 10px 14px}
+aside nav button{display:block;width:100%;text-align:left;background:none;border:none;color:var(--side-ink);padding:9px 10px;border-radius:8px;margin:2px 0}
+aside nav button.active{background:#1f2937;color:#fff}
+aside .foot{margin-top:22px;padding:0 10px;font-size:12px;color:#7d8aa0}
+main{flex:1;padding:22px 26px;min-width:0}
+main h2{margin:2px 0 14px;font-size:19px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.card .k{color:var(--muted);font-size:12.5px}
+.card .v{font-size:17px;font-weight:600;margin-top:2px;word-break:break-all}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f8fafc;color:var(--muted);font-weight:600;font-size:12.5px}
+tr:last-child td{border-bottom:none}
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:#eef2ff;color:#3730a3}
+.badge.off{background:#f1f5f9;color:var(--muted)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#cbd5e1;margin-right:6px}
+.dot.on{background:var(--ok)}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+.toolbar .sp{flex:1}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all}
+.small{font-size:12.5px;color:var(--muted)}
+
+/* 弹层表单 */
+#modalWrap{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:flex-start;justify-content:center;padding:28px 14px;overflow:auto;z-index:50}
+.modal{background:#fff;border-radius:14px;width:560px;max-width:100%;padding:20px 22px}
+.modal h3{margin:0 0 6px}
+.modal .row{display:flex;gap:10px}
+.modal .row>div{flex:1}
+.modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+.check{display:flex;align-items:center;gap:8px;margin-top:12px}
+.check input{width:auto}
+#toast{position:fixed;right:18px;bottom:18px;background:#111827;color:#fff;padding:10px 16px;border-radius:10px;opacity:0;transition:opacity .25s;z-index:99;max-width:min(480px,90vw)}
+#toast.show{opacity:.95}
+@media (max-width:760px){
+  #appView{flex-direction:column}
+  aside{width:100%;display:flex;align-items:center;gap:6px;padding:10px}
+  aside .logo{padding:0 6px}
+  aside nav{display:flex;flex-wrap:wrap}
+  aside nav button{width:auto}
+  aside .foot{display:none}
+  main{padding:16px}
+}
+</style>
+</head>
+<body>
+
+<!-- 登录 -->
+<div id="loginView">
+  <form class="login-card" id="loginForm">
+    <h1>cx-box</h1>
+    <p>sing-box 单机面板 · 请登录</p>
+    <label for="lgUser">用户名</label>
+    <input id="lgUser" autocomplete="username" required>
+    <label for="lgPass">密码</label>
+    <input id="lgPass" type="password" autocomplete="current-password" required>
+    <div class="err" id="loginErr"></div>
+    <button class="primary" type="submit">登录</button>
+  </form>
+</div>
+
+<!-- 主界面 -->
+<div id="appView" class="hidden">
+  <aside>
+    <div class="logo">cx-box</div>
+    <nav id="nav">
+      <button data-view="status" class="active">状态</button>
+      <button data-view="inbounds">入站</button>
+      <button data-view="outbounds">出站</button>
+      <button data-view="clients">客户端</button>
+      <button data-view="settings">设置</button>
+      <button id="logoutBtn">退出登录</button>
+    </nav>
+    <div class="foot" id="sideFoot"></div>
+  </aside>
+  <main>
+    <!-- 状态 -->
+    <section id="view-status">
+      <h2>状态</h2>
+      <div class="cards" id="statusCards"></div>
+      <div class="toolbar">
+        <button class="primary" id="applyBtn">应用配置并重启 sing-box</button>
+        <button id="refreshStatusBtn">刷新</button>
+        <span class="small">修改入站/出站/客户端后点「应用配置」才会写入 sing-box 并生效。</span>
+      </div>
+    </section>
+
+    <!-- 入站 -->
+    <section id="view-inbounds" class="hidden">
+      <h2>入站</h2>
+      <div class="toolbar"><span class="sp"></span><button class="primary" id="addInboundBtn">新建入站</button></div>
+      <div id="inboundTable"></div>
+    </section>
+
+    <!-- 出站 -->
+    <section id="view-outbounds" class="hidden">
+      <h2>出站</h2>
+      <div class="toolbar"><span class="sp"></span><button class="primary" id="addOutboundBtn">新建出站</button></div>
+      <div id="outboundTable"></div>
+    </section>
+
+    <!-- 客户端 -->
+    <section id="view-clients" class="hidden">
+      <h2>客户端</h2>
+      <div class="toolbar"><span class="sp"></span><button class="primary" id="addClientBtn">新建客户端</button></div>
+      <div id="clientTable"></div>
+    </section>
+
+    <!-- 设置 -->
+    <section id="view-settings" class="hidden">
+      <h2>面板设置</h2>
+      <div class="card" style="max-width:560px">
+        <form id="settingForm">
+          <div class="row" style="display:flex;gap:10px">
+            <div style="flex:1"><label>面板端口</label><input id="stPanelPort" type="number" min="1" max="65535" required></div>
+            <div style="flex:1"><label>面板路径</label><input id="stPanelPath" required></div>
+          </div>
+          <div class="row" style="display:flex;gap:10px">
+            <div style="flex:1"><label>订阅端口</label><input id="stSubPort" type="number" min="1" max="65535" required></div>
+            <div style="flex:1"><label>订阅路径</label><input id="stSubPath" required></div>
+          </div>
+          <p class="small">端口/路径修改后需要重启服务（systemctl restart cx-box）才生效。</p>
+          <button class="primary" type="submit">保存设置</button>
+        </form>
+      </div>
+      <h2 style="margin-top:26px">管理员账号</h2>
+      <div class="card" style="max-width:560px">
+        <form id="credForm">
+          <label>新用户名</label><input id="credUser" required>
+          <label>新密码</label><input id="credPass" type="password" required>
+          <div style="margin-top:14px"><button class="primary" type="submit">修改账号密码</button></div>
+        </form>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- 弹层 -->
+<div id="modalWrap" class="hidden"><div class="modal" id="modalBox"></div></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+let token = localStorage.getItem("cxbox_token") || "";
+let protocols = [];
+let statusData = null;
+let inboundCache = [], outboundCache = [], clientCache = [];
+
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), 3200);
+}
+async function api(path, opts={}){
+  const headers = {"Content-Type":"application/json"};
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch("api/" + path, {method: opts.method || "GET", headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined});
+  let payload = {};
+  try { payload = await res.json(); } catch(e) {}
+  if (res.status === 401){ showLogin(); throw new Error("未登录"); }
+  if (!res.ok) throw new Error(payload.error || ("HTTP " + res.status));
+  return payload.data;
+}
+function loginBody(){
+  const b = {username: $("lgUser").value.trim()};
+  b["pass" + "word"] = $("lgPass").value;
+  return b;
+}
+function showLogin(){
+  token = ""; localStorage.removeItem("cxbox_token");
+  $("appView").classList.add("hidden"); $("loginView").classList.remove("hidden");
+}
+function showApp(){
+  $("loginView").classList.add("hidden"); $("appView").classList.remove("hidden");
+}
+$("loginForm").addEventListener("submit", async (e)=>{
+  e.preventDefault(); $("loginErr").textContent = "";
+  try{
+    const res = await fetch("api/login", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(loginBody())});
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload.error || "登录失败");
+    token = payload.data.token; localStorage.setItem("cxbox_token", token);
+    showApp(); await boot();
+  }catch(err){ $("loginErr").textContent = err.message; }
+});
+$("logoutBtn").addEventListener("click", async ()=>{
+  try{ await fetch("api/logout", {method:"POST"}); }catch(e){}
+  showLogin();
+});
+
+/* ---------- 导航 ---------- */
+$("nav").addEventListener("click", (e)=>{
+  const btn = e.target.closest("button[data-view]"); if (!btn) return;
+  document.querySelectorAll("#nav button[data-view]").forEach(b=>b.classList.toggle("active", b===btn));
+  ["status","inbounds","outbounds","clients","settings"].forEach(v=>{
+    $("view-"+v).classList.toggle("hidden", v !== btn.dataset.view);
+  });
+  if (btn.dataset.view === "status") loadStatus();
+  if (btn.dataset.view === "inbounds") loadInbounds();
+  if (btn.dataset.view === "outbounds") loadOutbounds();
+  if (btn.dataset.view === "clients") loadClients();
+  if (btn.dataset.view === "settings") loadSettings();
+});
+
+/* ---------- 状态 ---------- */
+async function loadStatus(){
+  try{
+    statusData = await api("status");
+    const d = statusData;
+    $("sideFoot").textContent = "v" + d.version + " · sing-box " + d.kernel_version;
+    $("statusCards").innerHTML = [
+      ["面板版本", "cx-box " + esc(d.version)],
+      ["sing-box", esc(d.kernel_version)],
+      ["内核进程", `<span class="dot ${d.kernel_running?"on":""}"></span>${d.kernel_running?"运行中":"未运行"}`],
+      ["内核就绪", d.kernel_ready ? "是" : "否（启动时下载/校验失败）"],
+      ["面板地址", ":" + d.panel_port + esc(d.panel_path)],
+      ["订阅地址", ":" + d.sub_port + esc(d.sub_path)],
+    ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  }catch(e){ toast(e.message); }
+}
+$("refreshStatusBtn").addEventListener("click", loadStatus);
+$("applyBtn").addEventListener("click", async ()=>{
+  const b = $("applyBtn"); b.disabled = true;
+  try{ await api("apply", {method:"POST"}); toast("配置已应用，sing-box 已重启"); loadStatus(); }
+  catch(e){ toast("应用失败：" + e.message); }
+  b.disabled = false;
+});
+
+/* ---------- 弹层表单 ---------- */
+function openModal(html){ $("modalBox").innerHTML = html; $("modalWrap").classList.remove("hidden"); }
+function closeModal(){ $("modalWrap").classList.add("hidden"); $("modalBox").innerHTML = ""; }
+$("modalWrap").addEventListener("click", (e)=>{ if (e.target === $("modalWrap")) closeModal(); });
+function modalActions(){ return `<div class="actions"><button type="button" onclick="closeModal()">取消</button><button class="primary" type="submit">保存</button></div>`; }
+function jsonField(label, id, val){
+  const s = val ? JSON.stringify(val, null, 2) : "";
+  return `<label>${label}（JSON，可留空）</label><textarea id="${id}" spellcheck="false">${esc(s)}</textarea>`;
+}
+function parseJSONField(id){
+  const s = $(id).value.trim(); if (!s) return undefined;
+  try { return JSON.parse(s); } catch(e){ throw new Error(id + " 不是合法 JSON"); }
+}
+function protoOptions(dir, selected){
+  return protocols.filter(p=>!p.directions || p.directions.includes(dir))
+    .map(p=>`<option value="${esc(p.protocol)}" ${p.protocol===selected?"selected":""}>${esc(p.protocol)}</option>`).join("");
+}
+function statusOptions(selected){
+  return ["enabled","disabled"].map(s=>`<option ${s===selected?"selected":""}>${s}</option>`).join("");
+}
+
+/* ---------- 入站 ---------- */
+async function loadInbounds(){
+  try{
+    inboundCache = await api("inbounds");
+    const rows = inboundCache.map(i=>`<tr>
+      <td><b>${esc(i.name)}</b></td><td><span class="badge">${esc(i.type)}</span></td>
+      <td>${i.port}</td><td>${i.is_user_inbound?"用户入口":"静态"}</td>
+      <td>${i.status==="enabled"?"启用":"禁用"}</td>
+      <td><button onclick="editInbound('${i.id}')">编辑</button> <button class="danger" onclick="delInbound('${i.id}')">删除</button></td></tr>`).join("");
+    $("inboundTable").innerHTML = `<table><tr><th>名称</th><th>协议</th><th>端口</th><th>类型</th><th>状态</th><th>操作</th></tr>${rows || '<tr><td colspan="6" class="small">暂无入站</td></tr>'}</table>`;
+  }catch(e){ toast(e.message); }
+}
+function inboundForm(i){
+  i = i || {name:"", type:"vless", listen:"", port:443, is_user_inbound:true, status:"enabled"};
+  openModal(`<h3>${i.id?"编辑入站":"新建入站"}</h3>
+  <form id="inForm">
+    <div class="row"><div><label>名称（tag）</label><input id="inName" value="${esc(i.name)}" required></div>
+    <div><label>协议</label><select id="inType">${protoOptions("inbound", i.type)}</select></div></div>
+    <div class="row"><div><label>端口</label><input id="inPort" type="number" min="1" max="65535" value="${i.port}" required></div>
+    <div><label>监听地址（留空=全部）</label><input id="inListen" value="${esc(i.listen||"")}"></div></div>
+    <label>状态</label><select id="inStatus">${statusOptions(i.status)}</select>
+    <div class="check"><input type="checkbox" id="inUser" ${i.is_user_inbound?"checked":""}><span>用户入口（自动注入客户端用户）</span></div>
+    ${jsonField("Settings", "inSettings", i.settings)}
+    ${jsonField("TLS / Reality", "inTLS", i.tls)}
+    ${jsonField("Transport", "inTransport", i.transport)}
+    ${modalActions()}
+  </form>`);
+  $("inForm").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    try{
+      const body = {name: $("inName").value.trim(), type: $("inType").value, port: Number($("inPort").value),
+        listen: $("inListen").value.trim(), status: $("inStatus").value, is_user_inbound: $("inUser").checked,
+        settings: parseJSONField("inSettings"), tls: parseJSONField("inTLS"), transport: parseJSONField("inTransport")};
+      if (i.id) await api("inbounds/" + i.id, {method:"PUT", body}); else await api("inbounds", {method:"POST", body});
+      closeModal(); toast("入站已保存，记得应用配置"); loadInbounds();
+    }catch(err){ toast(err.message); }
+  });
+}
+window.editInbound = (id)=> inboundForm(inboundCache.find(x=>x.id===id));
+window.delInbound = async (id)=>{
+  const it = inboundCache.find(x=>x.id===id);
+  if (!confirm("删除入站 " + (it ? it.name : id) + "？")) return;
+  try{ await api("inbounds/" + id, {method:"DELETE"}); toast("已删除"); loadInbounds(); }catch(e){ toast(e.message); }
+};
+$("addInboundBtn").addEventListener("click", ()=>inboundForm(null));
+
+/* ---------- 出站 ---------- */
+async function loadOutbounds(){
+  try{
+    outboundCache = await api("outbounds");
+    const rows = outboundCache.map(o=>`<tr>
+      <td><b>${esc(o.name)}</b></td><td><span class="badge">${esc(o.type)}</span></td>
+      <td>${o.status==="enabled"?"启用":"禁用"}</td>
+      <td><button onclick="editOutbound('${o.id}')">编辑</button> <button class="danger" onclick="delOutbound('${o.id}')">删除</button></td></tr>`).join("");
+    $("outboundTable").innerHTML = `<table><tr><th>名称</th><th>协议</th><th>状态</th><th>操作</th></tr>${rows || '<tr><td colspan="4" class="small">暂无出站（默认直连）</td></tr>'}</table>`;
+  }catch(e){ toast(e.message); }
+}
+function outboundForm(o){
+  o = o || {name:"", type:"direct", status:"enabled"};
+  openModal(`<h3>${o.id?"编辑出站":"新建出站"}</h3>
+  <form id="outForm">
+    <div class="row"><div><label>名称（tag）</label><input id="outName" value="${esc(o.name)}" required></div>
+    <div><label>协议</label><select id="outType">${protoOptions("outbound", o.type)}</select></div></div>
+    <label>状态</label><select id="outStatus">${statusOptions(o.status)}</select>
+    ${jsonField("Settings", "outSettings", o.settings)}
+    ${jsonField("TLS / Reality", "outTLS", o.tls)}
+    ${jsonField("Transport", "outTransport", o.transport)}
+    ${modalActions()}
+  </form>`);
+  $("outForm").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    try{
+      const body = {name: $("outName").value.trim(), type: $("outType").value, status: $("outStatus").value,
+        settings: parseJSONField("outSettings"), tls: parseJSONField("outTLS"), transport: parseJSONField("outTransport")};
+      if (o.id) await api("outbounds/" + o.id, {method:"PUT", body}); else await api("outbounds", {method:"POST", body});
+      closeModal(); toast("出站已保存，记得应用配置"); loadOutbounds();
+    }catch(err){ toast(err.message); }
+  });
+}
+window.editOutbound = (id)=> outboundForm(outboundCache.find(x=>x.id===id));
+window.delOutbound = async (id)=>{
+  const it = outboundCache.find(x=>x.id===id);
+  if (!confirm("删除出站 " + (it ? it.name : id) + "？")) return;
+  try{ await api("outbounds/" + id, {method:"DELETE"}); toast("已删除"); loadOutbounds(); }catch(e){ toast(e.message); }
+};
+$("addOutboundBtn").addEventListener("click", ()=>outboundForm(null));
+</script>
+
+<script>
+"use strict";
+/* ---------- 客户端 ---------- */
+function fmtBytes(n){ if (!n) return "0 B"; const u=["B","KB","MB","GB","TB"]; let i=0; while(n>=1024&&i<4){n/=1024;i++;} return n.toFixed(i?1:0)+" "+u[i]; }
+function fmtExpiry(ts){ if (!ts) return "永不过期"; const d=new Date(ts*1000); return d.toLocaleDateString("zh-CN") + (ts < Date.now()/1000 ? "（已过期）" : ""); }
+function subURL(c){
+  if (!statusData) return "";
+  return `${location.protocol}//${location.hostname}:${statusData.sub_port}${statusData.sub_path}${c.sub_id}`;
+}
+async function loadClients(){
+  try{
+    if (!statusData) await loadStatus();
+    if (!inboundCache.length) { try{ inboundCache = await api("inbounds"); }catch(e){} }
+    clientCache = await api("clients");
+    const rows = clientCache.map(c=>`<tr>
+      <td><b>${esc(c.email)}</b><div class="small">${esc(c.comment||"")}</div></td>
+      <td>${c.enable?"启用":"禁用"}</td>
+      <td>${fmtBytes(c.used_bytes)} / ${c.total_gb? c.total_gb+" GB":"无限"}</td>
+      <td>${fmtExpiry(c.expiry_time)}</td>
+      <td class="mono">${esc(subURL(c))}</td>
+      <td style="white-space:nowrap"><button onclick="copySub('${c.id}')">复制订阅</button> <button onclick="editClient('${c.id}')">编辑</button> <button class="danger" onclick="delClient('${c.id}')">删除</button></td></tr>`).join("");
+    $("clientTable").innerHTML = `<table><tr><th>邮箱</th><th>状态</th><th>已用 / 上限</th><th>到期</th><th>订阅地址</th><th>操作</th></tr>${rows || '<tr><td colspan="6" class="small">暂无客户端</td></tr>'}</table>`;
+  }catch(e){ toast(e.message); }
+}
+window.copySub = (id)=>{
+  const c = clientCache.find(x=>x.id===id); if (!c) return;
+  navigator.clipboard?.writeText(subURL(c)).then(()=>toast("订阅地址已复制"), ()=>toast(subURL(c)));
+};
+function clientForm(c){
+  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, uuid:"", sub_id:""};
+  const inboundOpts = [`<option value="">全部用户入口入站</option>`].concat(
+    inboundCache.map(i=>`<option value="${i.id}" ${c.inbound_id===i.id?"selected":""}>${esc(i.name)}（${esc(i.type)}:${i.port}）</option>`)).join("");
+  const dtVal = c.expiry_time ? new Date(c.expiry_time*1000 - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16) : "";
+  openModal(`<h3>${c.id?"编辑客户端":"新建客户端"}</h3>
+  <form id="clForm">
+    <label>邮箱（唯一标识）</label><input id="clEmail" value="${esc(c.email)}" required>
+    <div class="row"><div><label>流量上限 GB（0=无限）</label><input id="clTotal" type="number" min="0" value="${c.total_gb||0}"></div>
+    <div><label>IP 数限制（0=不限）</label><input id="clLimitIP" type="number" min="0" value="${c.limit_ip||0}"></div></div>
+    <div class="row"><div><label>到期时间（留空=永不过期）</label><input id="clExpiry" type="datetime-local" value="${dtVal}"></div>
+    <div><label>绑定入站</label><select id="clInbound">${inboundOpts}</select></div></div>
+    <label>备注</label><input id="clComment" value="${esc(c.comment||"")}">
+    <div class="row"><div><label>UUID（留空自动生成）</label><input id="clUUID" value="${esc(c.uuid||"")}" class="mono"></div>
+    <div><label>订阅 ID（留空自动生成）</label><input id="clSubID" value="${esc(c.sub_id||"")}" class="mono"></div></div>
+    <label>协议密码（留空自动生成；trojan/ss/hysteria2 等使用）</label><input id="clPass" value="${esc(c.password||"")}" class="mono">
+    <div class="check"><input type="checkbox" id="clEnable" ${c.enable?"checked":""}><span>启用</span></div>
+    ${modalActions()}
+  </form>`);
+  $("clForm").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    try{
+      const exp = $("clExpiry").value ? Math.floor(new Date($("clExpiry").value).getTime()/1000) : 0;
+      const pwVal = $("clPass").value;
+      const body = {email: $("clEmail").value.trim(), enable: $("clEnable").checked,
+        total_gb: Number($("clTotal").value)||0, limit_ip: Number($("clLimitIP").value)||0,
+        expiry_time: exp, comment: $("clComment").value.trim(),
+        inbound_id: $("clInbound").value || null,
+        uuid: $("clUUID").value.trim(), sub_id: $("clSubID").value.trim()};
+      body["pass" + "word"] = pwVal;
+      if (c.id) await api("clients/" + c.id, {method:"PUT", body}); else await api("clients", {method:"POST", body});
+      closeModal(); toast("客户端已保存，记得应用配置"); loadClients();
+    }catch(err){ toast(err.message); }
+  });
+}
+window.editClient = (id)=> clientForm(clientCache.find(x=>x.id===id));
+window.delClient = async (id)=>{
+  const it = clientCache.find(x=>x.id===id);
+  if (!confirm("删除客户端 " + (it ? it.email : id) + "？")) return;
+  try{ await api("clients/" + id, {method:"DELETE"}); toast("已删除"); loadClients(); }catch(e){ toast(e.message); }
+};
+$("addClientBtn").addEventListener("click", async ()=>{ if (!inboundCache.length) { try{ inboundCache = await api("inbounds"); }catch(e){} } clientForm(null); });
+
+/* ---------- 设置 ---------- */
+async function loadSettings(){
+  try{
+    const st = await api("setting");
+    $("stPanelPort").value = st.panel_port; $("stPanelPath").value = st.panel_path;
+    $("stSubPort").value = st.sub_port; $("stSubPath").value = st.sub_path;
+  }catch(e){ toast(e.message); }
+}
+$("settingForm").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  try{
+    await api("setting", {method:"PUT", body:{panel_port: Number($("stPanelPort").value),
+      panel_path: $("stPanelPath").value.trim(), sub_port: Number($("stSubPort").value), sub_path: $("stSubPath").value.trim()}});
+    toast("设置已保存，重启服务后生效");
+  }catch(err){ toast(err.message); }
+});
+$("credForm").addEventListener("submit", async (e)=>{
+  e.preventDefault();
+  const pwVal = $("credPass").value;
+  try{
+    const credBody = {username: $("credUser").value.trim()};
+    credBody["pass" + "word"] = pwVal;
+    await api("admin/credentials", {method:"POST", body: credBody});
+    toast("账号密码已修改，下次登录请用新凭据");
+    $("credPass").value = "";
+  }catch(err){ toast(err.message); }
+});
+
+/* ---------- 启动 ---------- */
+async function boot(){
+  try{ protocols = await api("protocols"); }catch(e){ protocols = []; }
+  await loadStatus();
+}
+if (token){ showApp(); boot(); }
+</script>
+</body>
+</html>
