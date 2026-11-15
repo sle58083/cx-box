@@ -127,8 +127,8 @@ func (r *ShadowsocksRenderer) Meta() ProtocolMeta {
 				{Label: "aes-256-gcm", Value: "aes-256-gcm"},
 				{Label: "chacha20-ietf-poly1305", Value: "chacha20-ietf-poly1305"},
 			}},
-			{Key: "password", Label: "密码", Type: "text", Required: true, Encrypt: true,
-				Help: "2022-blake3 系列需填 base64 编码的密钥（16/32 字节），非任意字符串"},
+			{Key: "password", Label: "密码", Type: "text", Required: false, Encrypt: true,
+				Help: "用户入口模式可留空（客户端各自使用自己的密码）；静态入站必填。2022-blake3 系列需填 base64 编码的密钥（16/32 字节），非任意字符串"},
 		},
 		Outbound: []FieldSchema{
 			{Key: "server", Label: "服务器地址", Type: "text", Required: true},
