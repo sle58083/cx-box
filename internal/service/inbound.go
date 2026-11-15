@@ -50,7 +50,37 @@ func (s *InboundService) validate(in *model.Inbound) error {
 	if !ok {
 		return fmt.Errorf("inbound: 不支持的协议类型 %q", in.Type)
 	}
+	if err := s.ensureNameFree(in.Name, in.ID); err != nil {
+		return err
+	}
 	return r.ValidateInbound(*in)
+}
+
+// ensureNameFree 校验名称（tag）未被占用：tag 在入站与出站之间全局唯一
+// （sing-box 配置同一命名空间），提前给中文提示，避免数据库唯一约束的
+// 英文报错（UNIQUE constraint failed）直接弹到用户面前。
+func (s *InboundService) ensureNameFree(name string, selfID uuid.UUID) error {
+	var cnt int64
+	q := s.db.Model(&model.Inbound{}).Where("name = ?", name)
+	if selfID != uuid.Nil {
+		q = q.Where("id != ?", selfID)
+	}
+	// 查询失败（如单元测试的局部迁移缺表）时不阻断：生产库表齐全，
+	// 且数据库唯一约束仍是最终兜底。
+	if err := q.Count(&cnt).Error; err != nil {
+		return nil
+	}
+	if cnt > 0 {
+		return fmt.Errorf("inbound: 名称（tag）%q 已被其他入站占用，请换一个名称", name)
+	}
+	var cntOut int64
+	if err := s.db.Model(&model.Outbound{}).Where("name = ?", name).Count(&cntOut).Error; err != nil {
+		return nil
+	}
+	if cntOut > 0 {
+		return fmt.Errorf("inbound: 名称（tag）%q 已被出站占用（入站与出站名称全局唯一），请换一个名称", name)
+	}
+	return nil
 }
 
 // avoidPortConflict 新建入站时自动避让已占用端口：请求端口已被其他入站
