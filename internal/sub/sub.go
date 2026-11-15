@@ -7,8 +7,11 @@
 package sub
 
 import (
+	"crypto/ecdh"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"time"
 
 	"gorm.io/gorm"
@@ -65,6 +68,13 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 		if err != nil {
 			continue
 		}
+		// 绑定了证书但 TLS 没写 server_name 时，用证书的首个域名补 SNI，
+		// 否则客户端连 IP 时证书校验/SNI 都对不上。
+		if in.CertID != nil {
+			if sni := g.certSNI(*in.CertID); sni != "" {
+				ob.TLS = fillSNI(ob.TLS, sni)
+			}
+		}
 		uri, err := r.SubscriptionURI(ob, user)
 		if err != nil {
 			continue // 该协议无标准订阅格式或参数不全，跳过
@@ -108,7 +118,98 @@ func inboundAsOutbound(in model.Inbound, host string) (model.Outbound, error) {
 		Name:      in.Name,
 		Type:      in.Type,
 		Settings:  raw,
-		TLS:       in.TLS,
+		TLS:       deriveRealityPublic(in.TLS),
 		Transport: in.Transport,
 	}, nil
+}
+
+// deriveRealityPublic 为订阅场景补全 Reality 公钥：入站 TLS 里只有 private_key，
+// 客户端需要 public_key（pbk）。能从私钥推导时注入 reality.public_key，
+// 并把 short_id 数组规范成首元素字符串（URI 参数形态）。解析失败原样返回。
+func deriveRealityPublic(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var tls map[string]any
+	if err := json.Unmarshal(raw, &tls); err != nil {
+		return raw
+	}
+	reality, ok := tls["reality"].(map[string]any)
+	if !ok {
+		return raw
+	}
+	if ids, ok := reality["short_id"].([]any); ok && len(ids) > 0 {
+		if s, ok := ids[0].(string); ok {
+			reality["short_id"] = s
+		}
+	}
+	if pk, _ := reality["public_key"].(string); pk != "" {
+		return raw
+	}
+	privStr, _ := reality["private_key"].(string)
+	if privStr == "" {
+		return raw
+	}
+	privBytes, err := decodeB64(privStr)
+	if err != nil {
+		return raw
+	}
+	priv, err := ecdh.X25519().NewPrivateKey(privBytes)
+	if err != nil {
+		return raw
+	}
+	reality["public_key"] = base64.RawURLEncoding.EncodeToString(priv.PublicKey().Bytes())
+	out, err := json.Marshal(tls)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// decodeB64 兼容 sing-box 常见的 RawURLEncoding 与标准编码。
+func decodeB64(s string) ([]byte, error) {
+	for _, enc := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding} {
+		if b, err := enc.DecodeString(s); err == nil {
+			return b, nil
+		}
+	}
+	return nil, fmt.Errorf("sub: base64 解码失败")
+}
+
+// certSNI 返回证书的首选 SNI 域名：Domains 里第一个 DNS 名（全是 IP 时取第一个 IP）。
+func (g *Generator) certSNI(certID string) string {
+	var cert model.Certificate
+	if err := g.db.First(&cert, "id = ?", certID).Error; err != nil {
+		return ""
+	}
+	var domains []string
+	if err := json.Unmarshal([]byte(cert.Domains), &domains); err != nil || len(domains) == 0 {
+		return ""
+	}
+	for _, d := range domains {
+		if net.ParseIP(d) == nil {
+			return d
+		}
+	}
+	return domains[0]
+}
+
+// fillSNI 在 TLS 的 server_name 为空时填入 sni（已有值不覆盖）。解析失败原样返回。
+func fillSNI(raw json.RawMessage, sni string) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var tls map[string]any
+	if err := json.Unmarshal(raw, &tls); err != nil {
+		return raw
+	}
+	if cur, _ := tls["server_name"].(string); cur != "" {
+		return raw
+	}
+	tls["server_name"] = sni
+	out, err := json.Marshal(tls)
+	if err != nil {
+		return raw
+	}
+	return out
 }
