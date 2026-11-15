@@ -12,6 +12,13 @@ import (
 // ErrUnknownProtocol 表示未注册的协议类型。
 var ErrUnknownProtocol = errors.New("configsvc: unknown protocol")
 
+// DefaultAPIPort 是 sing-box api service 的本地监听端口（仅回环，
+// 供 cx-box 采集 per-user 流量；见 internal/traffic）。
+const DefaultAPIPort = 19090
+
+// APIAddress 返回 api service 的监听地址（采集器与生成器共用同一约定）。
+func APIAddress() string { return fmt.Sprintf("127.0.0.1:%d", DefaultAPIPort) }
+
 // NodeConfigContext 是 Generator 的输入（单节点聚合后的配置上下文）。
 type NodeConfigContext struct {
 	Global     GlobalSettings
@@ -19,6 +26,7 @@ type NodeConfigContext struct {
 	Outbounds  []model.Outbound
 	Rules      []model.RoutingRule
 	ProxyUsers []renderer.ProxyUser // 该分组 active 用户（UUID 已解密）
+	APISecret  string               // 非空时注入 sing-box api service（流量统计）
 }
 
 // Generator 是中立模型 → sing-box JSON 的纯函数生成器。
@@ -84,12 +92,22 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 	}
 
 	// 4. 全局结构拼装。
-	// 注意：不生成 experimental.v2ray_api —— 那是 yc-box 多机版给 edge-agent
-	// gRPC 采流量用的，单体版无此需求；且 sing-box 官方构建不带 with_v2ray_api，
-	// 带上这一节会让 `sing-box check` 直接失败、内核永远起不来（P4 实测踩到）。
+	// 注意：不生成 experimental.v2ray_api —— 官方 sing-box 构建不带
+	// with_v2ray_api，带上这一节会让 `sing-box check` 直接失败、内核永远
+	// 起不来（P4 实测踩到）。流量统计改走 sing-box 1.14 官方 api service
+	// （services[].type=api，连接事件带 user 字段，可精确归因到客户端）。
 	doc := map[string]any{
 		kInbounds:  inbounds,
 		kOutbounds: outbounds,
+	}
+	if ctx.APISecret != "" {
+		doc["services"] = []map[string]any{{
+			"type":        "api",
+			"tag":         "api",
+			"listen":      "127.0.0.1",
+			"listen_port": DefaultAPIPort,
+			"secret":      ctx.APISecret,
+		}}
 	}
 	global.RouteFinal = resolveRouteFinal(outbounds)
 	applyGlobalTemplate(doc, global, ctx.Rules)
