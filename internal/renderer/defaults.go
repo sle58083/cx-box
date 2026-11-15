@@ -113,6 +113,20 @@ func Defaults() map[string]ProtocolDefaults {
 				`{"enabled": true, "server_name": ""}`,
 				""),
 		},
+		"socks": {
+			// 代理 IP 的主流形态：SOCKS5 + 账号密码（IP 白名单授权时删掉后两项即可）。
+			Outbound: dir(0,
+				`{"server": "", "server_port": 1080, "version": "5", "username": "", "password": ""}`,
+				"",
+				""),
+		},
+		"http": {
+			// HTTP 代理默认明文形态；HTTPS 代理在 TLS 配置里填 {"enabled": true, "server_name": ""}。
+			Outbound: dir(0,
+				`{"server": "", "server_port": 8080, "username": "", "password": ""}`,
+				"",
+				""),
+		},
 		"direct": {
 			Outbound: dir(0, `{}`, "", ""),
 		},
