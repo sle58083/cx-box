@@ -22,14 +22,12 @@ func (r *VMessRenderer) RenderInbound(_ *RenderContext, cfg model.Inbound, users
 	if err != nil {
 		return nil, err
 	}
-	alterID := settings["alter_id"]
-	if alterID == nil {
-		alterID = 0
-	}
+	// 注意：sing-box 的 vmess 入站用户只有 name/uuid——alter_id 是旧版 VMess 字段，
+	// 1.14 的入站解码会以 unknown field 拒绝（仅出站保留 alter_id 兼容）。
 	if cfg.IsUserInbound && len(users) > 0 {
 		us := make([]map[string]any, 0, len(users))
 		for _, u := range users {
-			us = append(us, map[string]any{fName: u.Name, fUUID: u.UUID, "alter_id": alterID})
+			us = append(us, map[string]any{fName: u.Name, fUUID: u.UUID})
 		}
 		out[fUsers] = us
 	} else if static := parseUsers(settings); len(static) > 0 {
@@ -124,6 +122,25 @@ func (r *VMessRenderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) (str
 		"net":  "tcp",
 		"type": "none",
 		"tls":  "",
+	}
+	if v := settings["alter_id"]; v != nil {
+		payload["aid"] = fmt.Sprintf("%v", v)
+	}
+	// 传输层跟随配置：ws 时带 net/path/host，否则客户端会用 tcp 连 ws 端口。
+	if tm, err := transportMap(cfg.Transport); err == nil && tm != nil {
+		if t := str(tm, fType); t != "" {
+			payload["net"] = t
+			if t == "ws" {
+				if p := str(tm, "path"); p != "" {
+					payload["path"] = p
+				}
+				if h, ok := tm["headers"].(map[string]any); ok {
+					if host := str(h, "Host"); host != "" {
+						payload["host"] = host
+					}
+				}
+			}
+		}
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
