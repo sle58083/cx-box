@@ -152,6 +152,7 @@ func (s *Server) handleStatus(c *gin.Context) {
 		return
 	}
 	kernelRunning := s.km != nil && s.km.Running()
+	trafficUp, trafficDown, _ := s.traffic.Totals(c.Request.Context())
 	ok(c, gin.H{
 		"app":            "cx-box",
 		"version":        Version,
@@ -162,6 +163,8 @@ func (s *Server) handleStatus(c *gin.Context) {
 		"panel_path":     st.PanelPath,
 		"sub_port":       st.SubPort,
 		"sub_path":       st.SubPath,
+		"traffic_up":     trafficUp,
+		"traffic_down":   trafficDown,
 	})
 }
 
