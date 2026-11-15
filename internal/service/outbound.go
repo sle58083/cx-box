@@ -46,7 +46,37 @@ func (s *OutboundService) validate(ob *model.Outbound) error {
 	if !ok {
 		return fmt.Errorf("outbound: 不支持的协议类型 %q", ob.Type)
 	}
+	if err := s.ensureNameFree(ob.Name, ob.ID); err != nil {
+		return err
+	}
 	return r.ValidateOutbound(*ob)
+}
+
+// ensureNameFree 校验名称（tag）未被占用：tag 在出站与入站之间全局唯一
+// （sing-box 配置同一命名空间），提前给中文提示，避免数据库唯一约束的
+// 英文报错（UNIQUE constraint failed）直接弹到用户面前。
+func (s *OutboundService) ensureNameFree(name string, selfID uuid.UUID) error {
+	var cnt int64
+	q := s.db.Model(&model.Outbound{}).Where("name = ?", name)
+	if selfID != uuid.Nil {
+		q = q.Where("id != ?", selfID)
+	}
+	// 查询失败（如单元测试的局部迁移缺表）时不阻断：生产库表齐全，
+	// 且数据库唯一约束仍是最终兜底。
+	if err := q.Count(&cnt).Error; err != nil {
+		return nil
+	}
+	if cnt > 0 {
+		return fmt.Errorf("outbound: 名称（tag）%q 已被其他出站占用，请换一个名称", name)
+	}
+	var cntIn int64
+	if err := s.db.Model(&model.Inbound{}).Where("name = ?", name).Count(&cntIn).Error; err != nil {
+		return nil
+	}
+	if cntIn > 0 {
+		return fmt.Errorf("outbound: 名称（tag）%q 已被入站占用（入站与出站名称全局唯一），请换一个名称", name)
+	}
+	return nil
 }
 
 // Create 新建出站。
