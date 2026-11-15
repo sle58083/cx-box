@@ -142,6 +142,9 @@ func (r *TUICRenderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) (stri
 	if sni := sniFromTLS(cfg); sni != "" {
 		q.Set("sni", sni)
 	}
+	if insecureFromTLS(cfg) {
+		q.Set("allow_insecure", "1")
+	}
 	return fmt.Sprintf("tuic://%s:%s@%s:%s?%s#%s", user.UUID, url.PathEscape(pwd), server, port, q.Encode(), cfg.Name), nil
 }
 
