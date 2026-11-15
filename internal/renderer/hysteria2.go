@@ -142,6 +142,9 @@ func (r *Hysteria2Renderer) SubscriptionURI(cfg model.Outbound, user ProxyUser) 
 	if sni := sniFromTLS(cfg); sni != "" {
 		q.Set("sni", sni)
 	}
+	if insecureFromTLS(cfg) {
+		q.Set("insecure", "1")
+	}
 	if obfs, ok := settings["obfs"].(map[string]any); ok {
 		if t := str(obfs, "type"); t != "" {
 			q.Set("obfs", t)
@@ -162,12 +165,16 @@ func (r *Hysteria2Renderer) Meta() ProtocolMeta {
 		MultiUser:   true,
 		Inbound: []FieldSchema{
 			{Key: "password", Label: "密码", Type: "text", Required: true, Encrypt: true},
+			{Key: "up_mbps", Label: "上行带宽 Mbps", Type: "number", Required: false},
+			{Key: "down_mbps", Label: "下行带宽 Mbps", Type: "number", Required: false},
 			{Key: "masquerade", Label: "Masquerade", Type: "text", Required: false},
 		},
 		Outbound: []FieldSchema{
 			{Key: "server", Label: "服务器地址", Type: "text", Required: true},
 			{Key: "server_port", Label: "端口", Type: "number", Required: true},
 			{Key: "password", Label: "密码", Type: "text", Required: true, Encrypt: true},
+			{Key: "up_mbps", Label: "上行带宽 Mbps", Type: "number", Required: false},
+			{Key: "down_mbps", Label: "下行带宽 Mbps", Type: "number", Required: false},
 		},
 	}
 }
