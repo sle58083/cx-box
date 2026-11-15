@@ -115,7 +115,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	if m.cmd != nil && m.cmd.Process != nil {
 		return fmt.Errorf("kernel: sing-box 已在运行 (pid %d)", m.cmd.Process.Pid)
 	}
-	cmd := exec.CommandContext(ctx, m.BinaryPath(), "run", "-c", m.ConfigPath())
+	// 内核是守护进程，生命周期由 Stop 管理，不能绑定调用方 ctx：
+	// 否则经 HTTP apply 触发的重启会在请求结束（ctx 取消）时被连带杀掉。
+	cmd := exec.CommandContext(context.Background(), m.BinaryPath(), "run", "-c", m.ConfigPath())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
