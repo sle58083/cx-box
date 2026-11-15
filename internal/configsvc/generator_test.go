@@ -6,7 +6,33 @@ import (
 	"testing"
 
 	"github.com/sle58083/cx-box/internal/model"
+	"github.com/sle58083/cx-box/internal/renderer"
 )
+
+// TestUsersForInbound 客户端入站选择在内核用户注入侧的过滤（与订阅侧同语义）。
+func TestUsersForInbound(t *testing.T) {
+	users := []renderer.ProxyUser{
+		{ID: "c-all"},
+		{ID: "c-ab", InboundIDs: []string{"in-a", "in-b"}},
+		{ID: "c-b", InboundIDs: []string{"in-b"}},
+	}
+	ids := func(list []renderer.ProxyUser) []string {
+		out := make([]string, 0, len(list))
+		for _, u := range list {
+			out = append(out, u.ID)
+		}
+		return out
+	}
+	if got := ids(usersForInbound(users, "in-a")); len(got) != 2 || got[0] != "c-all" || got[1] != "c-ab" {
+		t.Fatalf("in-a users: %v", got)
+	}
+	if got := ids(usersForInbound(users, "in-b")); len(got) != 3 {
+		t.Fatalf("in-b users: %v", got)
+	}
+	if got := ids(usersForInbound(users, "in-x")); len(got) != 1 || got[0] != "c-all" {
+		t.Fatalf("in-x users: %v", got)
+	}
+}
 
 func TestGenerateDispatchesViaRegistry(t *testing.T) {
 	g := NewGenerator()
