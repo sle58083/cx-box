@@ -8,8 +8,10 @@ package sub
 
 import (
 	"crypto/ecdh"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"time"
@@ -78,6 +80,12 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 			// 未绑证书的 TLS 入站由面板自动证书兜底，同样补上其域名作 SNI。
 			ob.TLS = fillSNI(ob.TLS, sni)
 		}
+		// 生效证书为自签时客户端无法通过 CA 校验，链接必须带跳过校验标记，
+		// 否则 trojan / hysteria2 / tuic / anytls 等 TLS 节点在客户端全部连不上
+		//（实测 x509: certificate signed by unknown authority）。
+		if g.selfSignedCert(in) {
+			ob.TLS = fillInsecure(ob.TLS)
+		}
 		uri, err := r.SubscriptionURI(ob, user)
 		if err != nil {
 			continue // 该协议无标准订阅格式或参数不全，跳过
@@ -91,8 +99,8 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 // 否则用全部启用的用户入口入站（is_user_inbound）。
 func (g *Generator) targetInbounds(client *model.Client) ([]model.Inbound, error) {
 	q := g.db.Where("status = ?", model.StatusEnabled)
-	if client.InboundID != nil && *client.InboundID != "" {
-		q = q.Where("id = ?", *client.InboundID)
+	if ids := client.SelectedInboundIDs(); len(ids) > 0 {
+		q = q.Where("id IN ?", ids)
 	} else {
 		q = q.Where("is_user_inbound = ?", true)
 	}
@@ -212,6 +220,82 @@ func firstDomain(domainsJSON string) string {
 }
 
 // fillSNI 在 TLS 的 server_name 为空时填入 sni（已有值不覆盖）。解析失败原样返回。
+// selfSignedCert 判断入站最终生效的证书是否为自签证书：
+//   - 绑了面板证书：面板自签（Type=self_signed）或导入 PEM 本身自签 → true；
+//   - 未绑证书：TLS 里自备 certificate_path 的无法判定，按非自签处理；
+//     其余情况应用时由面板自动证书（自签）兜底 → true。
+//
+// TLS 未启用或启用了 Reality 时与证书无关，返回 false。
+func (g *Generator) selfSignedCert(in model.Inbound) bool {
+	var tls map[string]any
+	if len(in.TLS) > 0 {
+		if err := json.Unmarshal(in.TLS, &tls); err != nil {
+			return false
+		}
+	}
+	if en, _ := tls["enabled"].(bool); !en {
+		return false
+	}
+	if rm, ok := tls["reality"].(map[string]any); ok {
+		if en, _ := rm["enabled"].(bool); en {
+			return false
+		}
+	}
+	if in.CertID != nil && *in.CertID != "" {
+		var cert model.Certificate
+		if err := g.db.First(&cert, "id = ?", *in.CertID).Error; err != nil {
+			return false
+		}
+		if cert.Type == "self_signed" {
+			return true
+		}
+		return pemSelfSigned(cert.CertPEM)
+	}
+	if _, ok := tls["certificate_path"]; ok {
+		return false
+	}
+	return true
+}
+
+// pemSelfSigned 解析 PEM 叶子证书并判定是否自签：颁发者与主体相同，
+// 且签名能用证书自身公钥验过。不用 CheckSignatureFrom——它要求父证书带
+// CA 约束，普通自签服务器证书（IsCA=false）会被误判为非自签。
+func pemSelfSigned(certPEM string) bool {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return false
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	if string(leaf.RawIssuer) != string(leaf.RawSubject) {
+		return false
+	}
+	return leaf.CheckSignature(leaf.SignatureAlgorithm, leaf.RawTBSCertificate, leaf.Signature) == nil
+}
+
+// fillInsecure 在订阅出站视图的 TLS 里置 insecure=true，
+// 各协议 SubscriptionURI 据此在链接里输出跳过证书校验的参数。
+func fillInsecure(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var tls map[string]any
+	if err := json.Unmarshal(raw, &tls); err != nil {
+		return raw
+	}
+	if v, _ := tls["insecure"].(bool); v {
+		return raw
+	}
+	tls["insecure"] = true
+	out, err := json.Marshal(tls)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
 func fillSNI(raw json.RawMessage, sni string) json.RawMessage {
 	if len(raw) == 0 {
 		return raw
