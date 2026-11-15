@@ -94,7 +94,8 @@ func renderTLS(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if m == nil {
+	if m == nil || len(m) == 0 {
+		// 空对象 {} 等同于未配置，不输出 tls 字段（否则 sing-box 会拒绝空 tls）。
 		return nil, nil
 	}
 	return m, nil
