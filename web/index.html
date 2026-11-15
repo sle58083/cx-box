@@ -102,6 +102,7 @@ tr:last-child td{border-bottom:none}
       <button data-view="inbounds">入站</button>
       <button data-view="outbounds">出站</button>
       <button data-view="clients">客户端</button>
+      <button data-view="certs">证书</button>
       <button data-view="settings">设置</button>
       <button id="logoutBtn">退出登录</button>
     </nav>
@@ -138,6 +139,13 @@ tr:last-child td{border-bottom:none}
       <h2>客户端</h2>
       <div class="toolbar"><span class="sp"></span><button class="primary" id="addClientBtn">新建客户端</button></div>
       <div id="clientTable"></div>
+    </section>
+
+    <!-- 证书 -->
+    <section id="view-certs" class="hidden">
+      <h2>证书</h2>
+      <div class="toolbar"><span class="small">自签证书一键生成；也可导入已有 PEM。入站绑定证书后，应用配置时会自动落盘并注入 TLS 路径。</span><span class="sp"></span><button id="importCertBtn">导入证书</button><button class="primary" id="selfSignBtn">生成自签证书</button></div>
+      <div id="certTable"></div>
     </section>
 
     <!-- 设置 -->
@@ -179,6 +187,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (ch) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
 let token = localStorage.getItem("cxbox_token") || "";
 let protocols = [];
+let protocolDefaults = {};
 let statusData = null;
 let inboundCache = [], outboundCache = [], clientCache = [];
 
@@ -229,13 +238,14 @@ $("logoutBtn").addEventListener("click", async ()=>{
 $("nav").addEventListener("click", (e)=>{
   const btn = e.target.closest("button[data-view]"); if (!btn) return;
   document.querySelectorAll("#nav button[data-view]").forEach(b=>b.classList.toggle("active", b===btn));
-  ["status","inbounds","outbounds","clients","settings"].forEach(v=>{
+  ["status","inbounds","outbounds","clients","certs","settings"].forEach(v=>{
     $("view-"+v).classList.toggle("hidden", v !== btn.dataset.view);
   });
   if (btn.dataset.view === "status") loadStatus();
   if (btn.dataset.view === "inbounds") loadInbounds();
   if (btn.dataset.view === "outbounds") loadOutbounds();
   if (btn.dataset.view === "clients") loadClients();
+  if (btn.dataset.view === "certs") loadCerts();
   if (btn.dataset.view === "settings") loadSettings();
 });
 
@@ -276,6 +286,33 @@ function parseJSONField(id){
   const s = $(id).value.trim(); if (!s) return undefined;
   try { return JSON.parse(s); } catch(e){ throw new Error(id + " 不是合法 JSON"); }
 }
+function fillJSONField(id, raw){
+  const el = $(id); if (!el) return;
+  el.value = raw ? JSON.stringify(raw, null, 2) : "";
+}
+async function applyInboundDefaults(type){
+  const d = (protocolDefaults[type] || {}).inbound; if (!d) return;
+  if (d.port) $("inPort").value = d.port;
+  fillJSONField("inSettings", d.settings);
+  fillJSONField("inTLS", d.tls);
+  fillJSONField("inTransport", d.transport);
+  const hint = $("inRealityHint"); if (hint) hint.textContent = "";
+  if (type === "vless"){
+    try{
+      const kp = await api("tools/reality-keypair", {method:"POST"});
+      const tls = d.tls ? JSON.parse(JSON.stringify(d.tls)) : {};
+      if (tls.reality) tls.reality.private_key = kp.private_key;
+      fillJSONField("inTLS", tls);
+      if (hint) hint.textContent = "已自动生成 Reality 密钥对。公钥（客户端连接用，订阅会自动带上）：" + kp.public_key;
+    }catch(e){}
+  }
+}
+function applyOutboundDefaults(type){
+  const d = (protocolDefaults[type] || {}).outbound; if (!d) return;
+  fillJSONField("outSettings", d.settings);
+  fillJSONField("outTLS", d.tls);
+  fillJSONField("outTransport", d.transport);
+}
 function protoOptions(dir, selected){
   return protocols.filter(p=>!p.directions || p.directions.includes(dir))
     .map(p=>`<option value="${esc(p.protocol)}" ${p.protocol===selected?"selected":""}>${esc(p.protocol)}</option>`).join("");
@@ -296,7 +333,12 @@ async function loadInbounds(){
     $("inboundTable").innerHTML = `<table><tr><th>名称</th><th>协议</th><th>端口</th><th>类型</th><th>状态</th><th>操作</th></tr>${rows || '<tr><td colspan="6" class="small">暂无入站</td></tr>'}</table>`;
   }catch(e){ toast(e.message); }
 }
-function inboundForm(i){
+async function ensureCerts(){ if (!certCache.length) { try{ certCache = await api("certificates"); }catch(e){} } }
+function certOptions(selected){
+  return [`<option value="">不绑定</option>`].concat(
+    certCache.map(ct=>`<option value="${ct.id}" ${selected===ct.id?"selected":""}>${esc(ct.name)}（${esc(ct.type)}）</option>`)).join("");
+}
+async function inboundForm(i){ await ensureCerts();
   i = i || {name:"", type:"vless", listen:"", port:443, is_user_inbound:true, status:"enabled"};
   openModal(`<h3>${i.id?"编辑入站":"新建入站"}</h3>
   <form id="inForm">
@@ -305,17 +347,24 @@ function inboundForm(i){
     <div class="row"><div><label>端口</label><input id="inPort" type="number" min="1" max="65535" value="${i.port}" required></div>
     <div><label>监听地址（留空=全部）</label><input id="inListen" value="${esc(i.listen||"")}"></div></div>
     <label>状态</label><select id="inStatus">${statusOptions(i.status)}</select>
+    <label>绑定证书（可选；绑定后 TLS 框只需 enabled/server_name，证书路径自动注入）</label><select id="inCert">${certOptions(i.cert_id)}</select>
     <div class="check"><input type="checkbox" id="inUser" ${i.is_user_inbound?"checked":""}><span>用户入口（自动注入客户端用户）</span></div>
     ${jsonField("Settings", "inSettings", i.settings)}
     ${jsonField("TLS / Reality", "inTLS", i.tls)}
+    <p class="small" id="inRealityHint"></p>
     ${jsonField("Transport", "inTransport", i.transport)}
     ${modalActions()}
   </form>`);
+  if (!i.id){
+    applyInboundDefaults(i.type);
+    $("inType").addEventListener("change", ()=>applyInboundDefaults($("inType").value));
+  }
   $("inForm").addEventListener("submit", async (e)=>{
     e.preventDefault();
     try{
       const body = {name: $("inName").value.trim(), type: $("inType").value, port: Number($("inPort").value),
         listen: $("inListen").value.trim(), status: $("inStatus").value, is_user_inbound: $("inUser").checked,
+        cert_id: $("inCert").value || null,
         settings: parseJSONField("inSettings"), tls: parseJSONField("inTLS"), transport: parseJSONField("inTransport")};
       if (i.id) await api("inbounds/" + i.id, {method:"PUT", body}); else await api("inbounds", {method:"POST", body});
       closeModal(); toast("入站已保存，记得应用配置"); loadInbounds();
@@ -353,6 +402,10 @@ function outboundForm(o){
     ${jsonField("Transport", "outTransport", o.transport)}
     ${modalActions()}
   </form>`);
+  if (!o.id){
+    applyOutboundDefaults(o.type);
+    $("outType").addEventListener("change", ()=>applyOutboundDefaults($("outType").value));
+  }
   $("outForm").addEventListener("submit", async (e)=>{
     e.preventDefault();
     try{
@@ -473,10 +526,77 @@ $("credForm").addEventListener("submit", async (e)=>{
 
 /* ---------- 启动 ---------- */
 async function boot(){
-  try{ protocols = await api("protocols"); }catch(e){ protocols = []; }
+  try{
+    const data = await api("protocols");
+    protocols = data.protocols || [];
+    protocolDefaults = data.defaults || {};
+  }catch(e){ protocols = []; }
   await loadStatus();
 }
 if (token){ showApp(); boot(); }
 </script>
+
+<script>
+"use strict";
+/* ---------- 证书 ---------- */
+let certCache = [];
+function fmtDate(t){ if (!t) return "-"; return new Date(t).toLocaleDateString("zh-CN"); }
+function certDomains(ct){
+  try { const d = JSON.parse(ct.domains || "[]"); return Array.isArray(d) ? d.join(", ") : ct.domains; }
+  catch(e){ return ct.domains || ""; }
+}
+async function loadCerts(){
+  try{
+    certCache = await api("certificates");
+    const rows = certCache.map(ct=>`<tr>
+      <td><b>${esc(ct.name)}</b></td><td>${ct.type==="self_signed"?"自签":"导入"}</td>
+      <td>${esc(certDomains(ct))}</td><td>${fmtDate(ct.not_after)}</td>
+      <td>${ct.status==="valid"?"有效":esc(ct.status)}</td>
+      <td><button class="danger" onclick="delCert('${ct.id}')">删除</button></td></tr>`).join("");
+    $("certTable").innerHTML = `<table><tr><th>名称</th><th>类型</th><th>域名 / IP</th><th>到期</th><th>状态</th><th>操作</th></tr>${rows || '<tr><td colspan="6" class="small">暂无证书</td></tr>'}</table>`;
+  }catch(e){ toast(e.message); }
+}
+window.delCert = async (id)=>{
+  const ct = certCache.find(x=>x.id===id);
+  if (!confirm("删除证书 " + (ct ? ct.name : id) + "？")) return;
+  try{ await api("certificates/" + id, {method:"DELETE"}); toast("已删除"); loadCerts(); }catch(e){ toast(e.message); }
+};
+$("selfSignBtn").addEventListener("click", ()=>{
+  openModal(`<h3>生成自签证书</h3>
+  <form id="ssForm">
+    <label>名称</label><input id="ssName" value="自签证书" required>
+    <label>域名 / IP（逗号分隔，客户端连接时校验的名称）</label><input id="ssDomains" value="www.bing.com" required>
+    <label>有效期（天）</label><input id="ssDays" type="number" min="1" value="3650">
+    <p class="small">自签证书用于 hysteria2 / tuic / trojan 等：客户端需开启「允许不安全」或导入证书。</p>
+    ${modalActions()}
+  </form>`);
+  $("ssForm").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    try{
+      const domains = $("ssDomains").value.split(",").map(x=>x.trim()).filter(Boolean);
+      await api("certificates/selfsigned", {method:"POST", body:{name: $("ssName").value.trim(), domains, days: Number($("ssDays").value)||3650}});
+      closeModal(); toast("自签证书已生成"); loadCerts();
+    }catch(err){ toast(err.message); }
+  });
+});
+$("importCertBtn").addEventListener("click", ()=>{
+  openModal(`<h3>导入证书（PEM）</h3>
+  <form id="impForm">
+    <label>名称</label><input id="impName" required>
+    <label>证书 PEM</label><textarea id="impCert" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+    <label>私钥 PEM</label><textarea id="impKey" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+    ${modalActions()}
+  </form>`);
+  $("impForm").addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    try{
+      await api("certificates", {method:"POST", body:{name: $("impName").value.trim(),
+        cert_pem: $("impCert").value, key_pem: $("impKey").value}});
+      closeModal(); toast("证书已导入"); loadCerts();
+    }catch(err){ toast(err.message); }
+  });
+});
+</script>
+
 </body>
 </html>
