@@ -1,6 +1,7 @@
 package renderer
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 
@@ -80,12 +81,35 @@ func (r *VLESSRenderer) RenderOutbound(_ *RenderContext, cfg model.Outbound) (ma
 	return out, nil
 }
 
+// validateFlowCombo 拦截注定不可用的组合：xtls-rprx-vision 流控要求原始
+// TCP/TLS 连接，配 ws/grpc/http 传输时 sing-box 客户端会直接报错
+// （vision: not a valid supported TLS connection），保存时就拦下。
+// 注意 Reality + ws/grpc 经实测在 sing-box 中可用，不在此拦截。
+func validateFlowCombo(transport json.RawMessage, settings map[string]any) error {
+	if str(settings, fFlow) != "xtls-rprx-vision" {
+		return nil
+	}
+	tm, err := transportMap(transport)
+	if err != nil {
+		return err
+	}
+	if tt := str(tm, fType); tt != "" && tt != "tcp" {
+		return fmt.Errorf("vless: xtls-rprx-vision 流控仅支持 TCP 直连传输，请将传输方式改为「TCP 直连」或清空流控")
+	}
+	return nil
+}
+
 func (r *VLESSRenderer) ValidateInbound(cfg model.Inbound) error {
 	if cfg.Port <= 0 || cfg.Port > 65535 {
 		return fmt.Errorf("vless inbound: listen_port 必须在 1-65535")
 	}
 	if err := validateInboundTLSCommon(cfg, []TLSMode{TLSModeNone, TLSModePlain, TLSModeReality, TLSModeECH}, false); err != nil {
 		return err
+	}
+	if inSettings, err := parseMap(cfg.Settings); err == nil {
+		if err := validateFlowCombo(cfg.Transport, inSettings); err != nil {
+			return err
+		}
 	}
 	if cfg.IsUserInbound {
 		return nil // 用户由代理用户注入
@@ -116,6 +140,9 @@ func (r *VLESSRenderer) ValidateOutbound(cfg model.Outbound) error {
 	}
 	if _, err := uuid.Parse(str(settings, fUUID)); err != nil {
 		return fmt.Errorf("vless outbound: uuid 非法: %w", err)
+	}
+	if err := validateFlowCombo(cfg.Transport, settings); err != nil {
+		return err
 	}
 	return validateOutboundTLSCommon(cfg, []TLSMode{TLSModeNone, TLSModePlain, TLSModeReality, TLSModeECH}, false)
 }
@@ -189,13 +216,13 @@ func (r *VLESSRenderer) Meta() ProtocolMeta {
 		TLSRequired: false,
 		MultiUser:   true,
 		Inbound: []FieldSchema{
-			{Key: "flow", Label: "Flow", Type: "text", Required: false},
+			{Key: "flow", Label: "流控 Flow", Type: "select", Required: false, Options: []FieldOption{{Label: "xtls-rprx-vision", Value: "xtls-rprx-vision"}}, Help: "vision 流控仅支持 TCP 直连传输"},
 		},
 		Outbound: []FieldSchema{
 			{Key: "server", Label: "服务器地址", Type: "text", Required: true},
 			{Key: "server_port", Label: "端口", Type: "number", Required: true},
 			{Key: "uuid", Label: "UUID", Type: "text", Required: true, Encrypt: true},
-			{Key: "flow", Label: "Flow", Type: "text", Required: false},
+			{Key: "flow", Label: "流控 Flow", Type: "select", Required: false, Options: []FieldOption{{Label: "xtls-rprx-vision", Value: "xtls-rprx-vision"}}, Help: "vision 流控仅支持 TCP 直连传输"},
 		},
 	}
 }
