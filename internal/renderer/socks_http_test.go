@@ -2,7 +2,6 @@ package renderer
 
 import (
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/sle58083/cx-box/internal/model"
@@ -72,8 +71,55 @@ func TestSocksOutboundValidation(t *testing.T) {
 	if err := r.ValidateOutbound(mk(`{"server":"1.2.3.4","server_port":1080,"version":"4a","username":"u","password":"p"}`)); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
 	}
-	if _, err := r.RenderInbound(&RenderContext{}, model.Inbound{}, nil); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("socks inbound should be unsupported, got %v", err)
+}
+
+func TestSocksInboundRender(t *testing.T) {
+	r := &SocksRenderer{}
+	cfg := model.Inbound{
+		Name: "lan-socks", Type: "socks", Port: 1080,
+		Settings: json.RawMessage(`{"users":[{"username":"u1","password":"p1"},{"username":"u2","password":"p2"}]}`),
+	}
+	out, err := r.RenderInbound(&RenderContext{}, cfg, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if out["type"] != "socks" || out["listen_port"] != 1080 {
+		t.Fatalf("common fields wrong: %v", out)
+	}
+	us, ok := out["users"].([]map[string]any)
+	if !ok || len(us) != 2 || us[0]["username"] != "u1" || us[1]["password"] != "p2" {
+		t.Fatalf("users not passed: %v", out["users"])
+	}
+	// 无账号（内网无认证）时不输出 users 键。
+	cfg.Settings = json.RawMessage(`{}`)
+	out, err = r.RenderInbound(&RenderContext{}, cfg, nil)
+	if err != nil {
+		t.Fatalf("render noauth: %v", err)
+	}
+	if _, ok := out["users"]; ok {
+		t.Fatalf("users should be omitted when empty: %v", out)
+	}
+}
+
+func TestSocksInboundValidation(t *testing.T) {
+	r := &SocksRenderer{}
+	mk := func(port int, s string) model.Inbound {
+		return model.Inbound{Name: "x", Type: "socks", Port: port, Settings: json.RawMessage(s)}
+	}
+	if err := r.ValidateInbound(mk(0, `{}`)); err == nil {
+		t.Fatal("port 0 should fail")
+	}
+	if err := r.ValidateInbound(mk(1080, `{"users":[{"username":"u1"}]}`)); err == nil {
+		t.Fatal("user without password should fail")
+	}
+	if err := r.ValidateInbound(mk(1080, `{"users":[{"password":"p1"}]}`)); err == nil {
+		t.Fatal("user without username should fail")
+	}
+	if err := r.ValidateInbound(mk(1080, `{}`)); err != nil {
+		t.Fatalf("no-auth inbound should pass: %v", err)
+	}
+	if err := r.ValidateInbound(mk(1080, `{"users":[{"username":"u1","password":"p1"}]}`)); err != nil {
+		t.Fatalf("valid inbound rejected: %v", err)
 	}
 }
 
@@ -124,7 +170,56 @@ func TestHTTPOutboundValidation(t *testing.T) {
 	if err := r.ValidateOutbound(reality); err == nil {
 		t.Fatal("reality tls should fail for http outbound")
 	}
-	if _, err := r.RenderInbound(&RenderContext{}, model.Inbound{}, nil); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("http inbound should be unsupported, got %v", err)
+}
+
+func TestHTTPInboundRender(t *testing.T) {
+	r := &HTTPRenderer{}
+	cfg := model.Inbound{
+		Name:     "lan-http",
+		Type:     "http",
+		Port:     8080,
+		Settings: json.RawMessage(`{"users":[{"username":"u1","password":"p1"}]}`),
+		TLS:      json.RawMessage(`{"enabled":true,"server_name":"proxy.example.com"}`),
+	}
+	out, err := r.RenderInbound(&RenderContext{}, cfg, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if out["type"] != "http" || out["listen_port"] != 8080 {
+		t.Fatalf("common fields wrong: %v", out)
+	}
+	us, ok := out["users"].([]map[string]any)
+	if !ok || len(us) != 1 || us[0]["username"] != "u1" {
+		t.Fatalf("users not passed: %v", out["users"])
+	}
+	tlsMap, ok := out["tls"].(map[string]any)
+	if !ok || tlsMap["enabled"] != true {
+		t.Fatalf("tls not rendered (HTTPS inbound): %v", out["tls"])
+	}
+}
+
+func TestHTTPInboundValidation(t *testing.T) {
+	r := &HTTPRenderer{}
+	mk := func(port int, s string) model.Inbound {
+		return model.Inbound{Name: "x", Type: "http", Port: port, Settings: json.RawMessage(s)}
+	}
+	if err := r.ValidateInbound(mk(0, `{}`)); err == nil {
+		t.Fatal("port 0 should fail")
+	}
+	if err := r.ValidateInbound(mk(8080, `{"users":[{"username":"u1"}]}`)); err == nil {
+		t.Fatal("user without password should fail")
+	}
+	if err := r.ValidateInbound(mk(8080, `{"users":[{"username":"u1","password":"p1"}]}`)); err != nil {
+		t.Fatalf("valid inbound rejected: %v", err)
+	}
+	// 入站普通 TLS（HTTPS 代理）允许，Reality 不允许。
+	https := mk(8443, `{}`)
+	https.TLS = json.RawMessage(`{"enabled":true}`)
+	if err := r.ValidateInbound(https); err != nil {
+		t.Fatalf("plain TLS inbound should pass: %v", err)
+	}
+	https.TLS = json.RawMessage(`{"enabled":true,"reality":{"enabled":true,"private_key":"x"}}`)
+	if err := r.ValidateInbound(https); err == nil {
+		t.Fatal("reality tls should fail for http inbound")
 	}
 }
