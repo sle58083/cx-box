@@ -6,74 +6,115 @@
 <title>cx-box 面板</title>
 <style>
 :root{
-  --bg:#f4f6f8; --card:#fff; --ink:#1c2430; --muted:#6b7686; --line:#e3e8ee;
-  --brand:#2563eb; --brand-ink:#fff; --danger:#dc2626; --ok:#16a34a; --warn:#d97706;
-  --side:#111827; --side-ink:#cbd5e1;
+  color-scheme:dark;
+  --bg:#05080f; --panel:rgba(15,23,42,.72); --card:rgba(17,25,44,.62);
+  --ink:#e6edf7; --muted:#8fa1bd; --faint:#5b6b8c;
+  --line:rgba(56,189,248,.14); --line-soft:rgba(148,163,184,.09);
+  --cy:#22d3ee; --vi:#818cf8; --grad:linear-gradient(135deg,#22d3ee,#818cf8);
+  --brand-ink:#fff; --danger:#fb7185; --ok:#34d399; --warn:#fbbf24;
+  --side:rgba(8,12,24,.92);
 }
 *{box-sizing:border-box}
-body{margin:0;font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink)}
-button{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 14px;font-size:14px}
-button.primary{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
-button.danger{color:var(--danger)}
+html{scrollbar-color:rgba(56,189,248,.35) transparent}
+body{margin:0;font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--ink);min-height:100vh}
+body::before{content:"";position:fixed;inset:0;z-index:-2;background:
+  radial-gradient(720px 420px at 12% -6%,rgba(34,211,238,.14),transparent 62%),
+  radial-gradient(820px 520px at 88% -10%,rgba(129,140,248,.13),transparent 62%),
+  radial-gradient(640px 480px at 55% 112%,rgba(34,211,238,.07),transparent 60%),
+  linear-gradient(180deg,#060a13,#04060c)}
+body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background-image:linear-gradient(rgba(56,189,248,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,.045) 1px,transparent 1px);
+  background-size:44px 44px;
+  -webkit-mask-image:radial-gradient(ellipse 90% 70% at 50% 0%,#000 30%,transparent 78%);
+          mask-image:radial-gradient(ellipse 90% 70% at 50% 0%,#000 30%,transparent 78%)}
+::selection{background:rgba(34,211,238,.35)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(56,189,248,.22);border-radius:99px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+button{cursor:pointer;border:1px solid rgba(148,163,184,.20);background:rgba(148,163,184,.06);color:var(--ink);border-radius:10px;padding:7px 15px;font-size:14px;transition:all .18s ease}
+button:hover{border-color:rgba(34,211,238,.45);color:#fff;box-shadow:0 0 0 1px rgba(34,211,238,.12),0 4px 14px -6px rgba(34,211,238,.35)}
+button.primary{background:var(--grad);color:var(--brand-ink);border-color:transparent;font-weight:600;box-shadow:0 8px 20px -8px rgba(34,211,238,.55)}
+button.primary:hover{filter:brightness(1.1);box-shadow:0 10px 24px -8px rgba(34,211,238,.65)}
+button.danger{color:#fda4af}
+button.danger:hover{border-color:rgba(251,113,133,.5);background:rgba(251,113,133,.08);box-shadow:0 4px 14px -6px rgba(251,113,133,.35)}
 button:disabled{opacity:.55;cursor:wait}
-input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:#fff;color:var(--ink)}
+input,select,textarea{width:100%;padding:9px 11px;border:1px solid rgba(148,163,184,.20);border-radius:10px;font-size:14px;background:rgba(2,6,17,.55);color:var(--ink);transition:border-color .18s ease,box-shadow .18s ease}
+input:focus,select:focus,textarea:focus{outline:none;border-color:rgba(34,211,238,.6);box-shadow:0 0 0 3px rgba(34,211,238,.15)}
+input[type="checkbox"]{accent-color:var(--cy)}
 textarea{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;min-height:74px}
-label{display:block;font-size:12.5px;color:var(--muted);margin:10px 0 4px}
+label{display:block;font-size:12.5px;color:#9fb0cc;letter-spacing:.02em;margin:10px 0 4px}
 .hidden{display:none!important}
 
 /* 登录 */
 #loginView{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
-.login-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:28px;width:340px;max-width:100%;box-shadow:0 8px 30px rgba(16,24,40,.08)}
-.login-card h1{margin:0 0 4px;font-size:22px}
+.login-card{position:relative;overflow:hidden;background:linear-gradient(180deg,rgba(17,27,48,.85),rgba(9,14,28,.9));border:1px solid var(--line);border-radius:20px;padding:34px 30px;width:350px;max-width:100%;box-shadow:0 24px 60px -18px rgba(0,0,0,.7),0 0 44px -12px rgba(34,211,238,.25);backdrop-filter:blur(10px)}
+.login-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;background:var(--grad)}
+.login-card h1{margin:0 0 4px;font-size:27px;font-weight:800;letter-spacing:.04em;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
 .login-card p{margin:0 0 14px;color:var(--muted)}
-.login-card button{width:100%;margin-top:16px;padding:9px}
+.login-card button{width:100%;margin-top:16px;padding:10px}
 .err{color:var(--danger);min-height:20px;margin-top:8px;font-size:13px}
 
 /* 布局 */
 #appView{display:flex;min-height:100vh}
-aside{width:208px;background:var(--side);color:var(--side-ink);padding:18px 12px;flex:none}
-aside .logo{font-size:18px;font-weight:700;color:#fff;padding:2px 10px 14px}
-aside nav button{display:block;width:100%;text-align:left;background:none;border:none;color:var(--side-ink);padding:9px 10px;border-radius:8px;margin:2px 0}
-aside nav button.active{background:#1f2937;color:#fff}
-aside .foot{margin-top:22px;padding:0 10px;font-size:12px;color:#7d8aa0}
-main{flex:1;padding:22px 26px;min-width:0}
-main h2{margin:2px 0 14px;font-size:19px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-.card .k{color:var(--muted);font-size:12.5px}
-.card .v{font-size:17px;font-weight:600;margin-top:2px;word-break:break-all}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
-th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
-th{background:#f8fafc;color:var(--muted);font-weight:600;font-size:12.5px}
+aside{width:218px;background:linear-gradient(180deg,rgba(10,16,30,.94),rgba(6,10,20,.97));border-right:1px solid var(--line);color:var(--muted);padding:20px 14px;flex:none;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;backdrop-filter:blur(10px)}
+aside .logo{display:flex;align-items:center;gap:10px;font-size:19px;font-weight:800;letter-spacing:.03em;color:#fff;padding:2px 8px 18px}
+aside .logo .mark{width:28px;height:28px;flex:none;border-radius:9px;background:var(--grad);display:inline-flex;align-items:center;justify-content:center;box-shadow:0 6px 16px -4px rgba(34,211,238,.6)}
+aside .logo .mark svg{width:16px;height:16px}
+aside nav{display:flex;flex-direction:column;gap:3px}
+aside nav button{display:flex;align-items:center;gap:11px;width:100%;text-align:left;background:none;border:1px solid transparent;color:var(--muted);padding:9px 11px;border-radius:11px;font-size:14px;position:relative;box-shadow:none}
+aside nav button svg{width:18px;height:18px;flex:none;opacity:.85}
+aside nav button:hover{background:rgba(56,189,248,.07);color:var(--ink);border-color:transparent;box-shadow:none;transform:translateX(2px)}
+aside nav button.active{background:linear-gradient(90deg,rgba(34,211,238,.17),rgba(129,140,248,.10));color:#fff;border-color:rgba(56,189,248,.22)}
+aside nav button.active::before{content:"";position:absolute;left:-14px;top:20%;height:60%;width:3px;border-radius:99px;background:var(--grad);box-shadow:0 0 12px rgba(34,211,238,.8)}
+aside nav button.active svg{opacity:1;color:var(--cy)}
+aside .foot{margin-top:auto;padding:14px 8px 0;border-top:1px solid var(--line-soft);font-size:12px;color:var(--faint);line-height:1.7}
+main{flex:1;padding:28px 34px 40px;min-width:0;max-width:1280px;margin:0 auto;width:100%}
+main section{animation:fadeUp .28s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+main h2{margin:4px 0 16px;font-size:20px;font-weight:700;letter-spacing:.02em;display:flex;align-items:center;gap:11px}
+main h2::before{content:"";width:4px;height:20px;border-radius:99px;background:var(--grad);box-shadow:0 0 10px rgba(34,211,238,.55)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:18px}
+.card{position:relative;overflow:hidden;background:var(--card);border:1px solid var(--line-soft);border-radius:16px;padding:16px 18px;backdrop-filter:blur(8px)}
+.card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(34,211,238,.55),rgba(129,140,248,.45),transparent)}
+.card .k{color:var(--muted);font-size:12.5px;letter-spacing:.05em}
+.card .v{font-size:17px;font-weight:700;margin-top:3px;word-break:break-all;color:#f1f5f9}
+table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line-soft);border-radius:16px;overflow:hidden;backdrop-filter:blur(8px)}
+th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line-soft);vertical-align:top}
+th{background:rgba(56,189,248,.055);color:var(--muted);font-weight:600;font-size:12.5px;letter-spacing:.05em}
+tbody tr{transition:background .15s ease}
+tbody tr:hover td,table tr:hover td{background:rgba(56,189,248,.045)}
 tr:last-child td{border-bottom:none}
-.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:#eef2ff;color:#3730a3}
-.badge.off{background:#f1f5f9;color:var(--muted)}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#cbd5e1;margin-right:6px}
-.dot.on{background:var(--ok)}
-.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+.badge{display:inline-block;padding:1px 9px;border-radius:99px;font-size:12px;background:rgba(34,211,238,.11);color:#7dd3fc;border:1px solid rgba(34,211,238,.28)}
+.badge.off{background:rgba(148,163,184,.10);color:var(--muted);border-color:rgba(148,163,184,.2)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#475569;margin-right:6px;vertical-align:1px}
+.dot.on{background:var(--ok);box-shadow:0 0 9px rgba(52,211,153,.9)}
+.toolbar{display:flex;gap:9px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
 .toolbar .sp{flex:1}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all}
 .small{font-size:12.5px;color:var(--muted)}
 
 /* 弹层表单 */
-#modalWrap{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:flex-start;justify-content:center;padding:28px 14px;overflow:auto;z-index:50}
-.modal{background:#fff;border-radius:14px;width:560px;max-width:100%;padding:20px 22px}
-.modal h3{margin:0 0 6px}
+#modalWrap{position:fixed;inset:0;background:rgba(3,6,12,.68);display:flex;align-items:flex-start;justify-content:center;padding:28px 14px;overflow:auto;z-index:50;backdrop-filter:blur(6px)}
+.modal{background:linear-gradient(180deg,#0d1628,#0a1120);border:1px solid rgba(56,189,248,.20);border-radius:18px;width:560px;max-width:100%;padding:22px 24px;box-shadow:0 30px 70px -20px rgba(0,0,0,.8),0 0 50px -18px rgba(34,211,238,.35);animation:pop .18s ease}
+@keyframes pop{from{opacity:0;transform:scale(.975) translateY(5px)}to{opacity:1;transform:none}}
+.modal h3{margin:0 0 8px;font-size:17px}
 .modal .row{display:flex;gap:10px}
 .modal .row>div{flex:1}
 .modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
 .check{display:flex;align-items:center;gap:8px;margin-top:12px}
 .check input{width:auto}
-#toast{position:fixed;right:18px;bottom:18px;background:#111827;color:#fff;padding:10px 16px;border-radius:10px;opacity:0;transition:opacity .25s;z-index:99;max-width:min(480px,90vw)}
-#toast.show{opacity:.95}
+#toast{position:fixed;right:18px;bottom:18px;background:rgba(10,17,32,.94);border:1px solid rgba(34,211,238,.35);color:#fff;padding:11px 17px;border-radius:12px;opacity:0;transition:opacity .25s;z-index:99;max-width:min(480px,90vw);box-shadow:0 14px 34px -10px rgba(0,0,0,.7),0 0 24px -8px rgba(34,211,238,.4);backdrop-filter:blur(8px)}
+#toast.show{opacity:1}
 @media (max-width:760px){
   #appView{flex-direction:column}
-  aside{width:100%;display:flex;align-items:center;gap:6px;padding:10px}
+  aside{width:100%;height:auto;position:static;display:flex;flex-direction:row;align-items:center;gap:6px;padding:10px 12px;flex-wrap:wrap}
   aside .logo{padding:0 6px}
-  aside nav{display:flex;flex-wrap:wrap}
-  aside nav button{width:auto}
+  aside .logo .mark{width:24px;height:24px}
+  aside nav{flex-direction:row;flex-wrap:wrap}
+  aside nav button{width:auto;padding:7px 10px}
+  aside nav button.active::before{display:none}
   aside .foot{display:none}
-  main{padding:16px}
+  main{padding:18px 14px 30px}
 }
 </style>
 </head>
@@ -96,15 +137,15 @@ tr:last-child td{border-bottom:none}
 <!-- 主界面 -->
 <div id="appView" class="hidden">
   <aside>
-    <div class="logo">cx-box</div>
+    <div class="logo"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L4.5 13.5H11L9.8 22 19 10h-6.5L13 2z" fill="#06202b" stroke="none"/></svg></span>cx-box</div>
     <nav id="nav">
-      <button data-view="status" class="active">状态</button>
-      <button data-view="inbounds">入站</button>
-      <button data-view="outbounds">出站</button>
-      <button data-view="clients">客户端</button>
-      <button data-view="certs">证书</button>
-      <button data-view="settings">设置</button>
-      <button id="logoutBtn">退出登录</button>
+      <button data-view="status" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-6.5 4 12L16 12h5"/></svg>状态</button>
+      <button data-view="inbounds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v10m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>入站</button>
+      <button data-view="outbounds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13V3m0 0L8 7m4-4l4 4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>出站</button>
+      <button data-view="clients"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.4"/><path d="M3.6 19.2c.6-3.1 2.7-4.7 5.4-4.7s4.8 1.6 5.4 4.7"/><path d="M15.5 5.2a3.4 3.4 0 010 5.9M18 14.9c1.5.7 2.4 2 2.7 4"/></svg>客户端</button>
+      <button data-view="certs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 2.8v5.4c0 4.4-2.9 7.7-7 9.8-4.1-2.1-7-5.4-7-9.8V5.8z"/><path d="M9.2 11.8l2 2 3.8-4"/></svg>证书</button>
+      <button data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9.5M19.5 7H21M4 17h3.5M13.5 17H21"/><circle cx="16.5" cy="7" r="2.3"/><circle cx="10.5" cy="17" r="2.3"/></svg>设置</button>
+      <button id="logoutBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H6a2 2 0 01-2-2V5a2 2 0 012-2h3"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>退出登录</button>
     </nav>
     <div class="foot" id="sideFoot"></div>
   </aside>
