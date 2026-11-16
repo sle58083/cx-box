@@ -58,19 +58,21 @@ func randomHex(n int) string {
 // （直连）恒合法；其余必须是已存在的出站 ID。出站被禁用/删除不在这里拦，
 // 生成配置时自动回落全局默认。
 func (s *ClientService) validateOutbound(c *model.Client) error {
-	if c.OutboundID == "" || c.OutboundID == "direct" {
-		return nil
-	}
-	uid, err := uuid.Parse(c.OutboundID)
-	if err != nil {
-		return fmt.Errorf("client: 出口 ID 无效")
-	}
-	var cnt int64
-	if err := s.db.Model(&model.Outbound{}).Where("id = ?", uid).Count(&cnt).Error; err != nil {
-		return err
-	}
-	if cnt == 0 {
-		return fmt.Errorf("client: 所选出口不存在")
+	for _, id := range c.SelectedOutboundIDs() {
+		if id == "" || id == "direct" {
+			continue
+		}
+		uid, err := uuid.Parse(id)
+		if err != nil {
+			return fmt.Errorf("client: 出口 ID 无效")
+		}
+		var cnt int64
+		if err := s.db.Model(&model.Outbound{}).Where("id = ?", uid).Count(&cnt).Error; err != nil {
+			return err
+		}
+		if cnt == 0 {
+			return fmt.Errorf("client: 所选出口不存在")
+		}
 	}
 	return nil
 }
