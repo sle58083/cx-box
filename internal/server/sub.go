@@ -37,6 +37,12 @@ func (s *Server) handleSubscription(c *gin.Context) {
 	total := client.TotalGB * 1024 * 1024 * 1024
 	c.Header("Subscription-Userinfo",
 		fmt.Sprintf("upload=0; download=%d; total=%d; expire=%d", client.UsedBytes, total, client.ExpiryTime))
+	// 订阅名称：客户端导入时用作订阅标题（profile-title 约定），未设置时用邮箱。
+	subName := client.SubName
+	if subName == "" {
+		subName = client.Email
+	}
+	c.Header("profile-title", subName)
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", client.Email))
 
 	body := strings.Join(links, "\n")
