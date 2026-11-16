@@ -41,6 +41,7 @@ func (s *Server) registerPanelRoutes(r *gin.Engine, panelPath string) {
 		ok(c, gin.H{"protocols": renderer.Metas(), "defaults": renderer.Defaults()})
 	})
 	auth.POST("/tools/reality-keypair", s.handleRealityKeypair)
+	auth.POST("/tools/parse-link", s.handleParseLink)
 	auth.GET("/tools/qrcode", s.handleQRCode)
 	auth.POST("/apply", s.handleApply)
 
@@ -227,6 +228,42 @@ func (s *Server) handleApply(c *gin.Context) {
 	ok(c, gin.H{"applied": true})
 }
 
+// okApplied 是增删改成功后的统一响应：保存后立即应用配置，让面板修改
+// 即时生效（与用户对「保存即生效」的预期一致）。曾有用户建好全部入站和
+// 客户端却没点「应用配置」，内核一直跑空配置、节点全部不可用且面板毫无
+// 提示——自动应用就是为消除这个坑。应用失败不回滚已保存的数据（修正后
+// 再保存即可重试），但把错误以 apply_error 随响应带回，前端必须显著
+// 提示，绝不静默。
+func (s *Server) okApplied(c *gin.Context, data any) {
+	if s.cfg == nil {
+		ok(c, data)
+		return
+	}
+	if err := s.cfg.Apply(c.Request.Context()); err != nil {
+		c.JSON(http.StatusOK, gin.H{"data": data, "apply_error": "已保存，但应用配置失败：" + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": data, "applied": true})
+}
+
+// handleParseLink 把一条分享链接解析成出站草稿（落地机导入用）：前端
+// 拿到草稿后走正常的新建出站接口落库，名称冲突等校验与手工新建一致。
+func (s *Server) handleParseLink(c *gin.Context) {
+	var req struct {
+		URI string `json:"uri"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.URI) == "" {
+		failMsg(c, http.StatusBadRequest, "uri 必填")
+		return
+	}
+	parsed, err := renderer.ParseLink(req.URI)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	ok(c, parsed)
+}
+
 // ---- 入站 CRUD ----
 
 func (s *Server) listInbounds(c *gin.Context) {
@@ -249,7 +286,7 @@ func (s *Server) createInbound(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, in)
+	s.okApplied(c, in)
 }
 
 func (s *Server) getInbound(c *gin.Context) {
@@ -278,7 +315,7 @@ func (s *Server) updateInbound(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, in)
+	s.okApplied(c, in)
 }
 
 func (s *Server) deleteInbound(c *gin.Context) {
@@ -286,7 +323,7 @@ func (s *Server) deleteInbound(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, gin.H{"deleted": true})
+	s.okApplied(c, gin.H{"deleted": true})
 }
 
 // ---- 出站 CRUD ----
@@ -311,7 +348,7 @@ func (s *Server) createOutbound(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, ob)
+	s.okApplied(c, ob)
 }
 
 func (s *Server) getOutbound(c *gin.Context) {
@@ -340,7 +377,7 @@ func (s *Server) updateOutbound(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, ob)
+	s.okApplied(c, ob)
 }
 
 func (s *Server) deleteOutbound(c *gin.Context) {
@@ -348,7 +385,7 @@ func (s *Server) deleteOutbound(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, gin.H{"deleted": true})
+	s.okApplied(c, gin.H{"deleted": true})
 }
 
 // ---- 客户端 CRUD ----
@@ -417,7 +454,7 @@ func (s *Server) createClient(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, viewClient(&cl))
+	s.okApplied(c, viewClient(&cl))
 }
 
 func (s *Server) getClient(c *gin.Context) {
@@ -453,7 +490,7 @@ func (s *Server) updateClient(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, viewClient(&cl))
+	s.okApplied(c, viewClient(&cl))
 }
 
 // clientLinks 返回某客户端的逐条节点链接（单个节点导出用），内容与订阅一致，
@@ -522,7 +559,7 @@ func (s *Server) deleteClient(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, gin.H{"deleted": true})
+	s.okApplied(c, gin.H{"deleted": true})
 }
 
 // ---------- 证书 ----------
@@ -553,7 +590,7 @@ func (s *Server) createCertificate(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, cert)
+	s.okApplied(c, cert)
 }
 
 type selfSignedReq struct {
@@ -573,7 +610,7 @@ func (s *Server) createSelfSigned(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, cert)
+	s.okApplied(c, cert)
 }
 
 func (s *Server) deleteCertificate(c *gin.Context) {
@@ -581,7 +618,7 @@ func (s *Server) deleteCertificate(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err)
 		return
 	}
-	ok(c, gin.H{"deleted": true})
+	s.okApplied(c, gin.H{"deleted": true})
 }
 
 // handleQRCode 把 text 参数渲染成二维码 PNG（订阅导出弹窗用；
