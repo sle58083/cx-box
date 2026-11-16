@@ -54,10 +54,34 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// validateOutbound 校验客户端指定的出口：空（跟随全局默认）与 "direct"
+// （直连）恒合法；其余必须是已存在的出站 ID。出站被禁用/删除不在这里拦，
+// 生成配置时自动回落全局默认。
+func (s *ClientService) validateOutbound(c *model.Client) error {
+	if c.OutboundID == "" || c.OutboundID == "direct" {
+		return nil
+	}
+	uid, err := uuid.Parse(c.OutboundID)
+	if err != nil {
+		return fmt.Errorf("client: 出口 ID 无效")
+	}
+	var cnt int64
+	if err := s.db.Model(&model.Outbound{}).Where("id = ?", uid).Count(&cnt).Error; err != nil {
+		return err
+	}
+	if cnt == 0 {
+		return fmt.Errorf("client: 所选出口不存在")
+	}
+	return nil
+}
+
 // Create 新建客户端：Email 必填且唯一；UUID/SubID/Password 缺省自动生成。
 func (s *ClientService) Create(c *model.Client) error {
 	if c.Email == "" {
 		return fmt.Errorf("client: email 不能为空")
+	}
+	if err := s.validateOutbound(c); err != nil {
+		return err
 	}
 	var cnt int64
 	if err := s.db.Model(&model.Client{}).Where("email = ?", c.Email).Count(&cnt).Error; err != nil {
@@ -88,6 +112,9 @@ func (s *ClientService) Update(c *model.Client) error {
 	}
 	if c.Email == "" {
 		return fmt.Errorf("client: email 不能为空")
+	}
+	if err := s.validateOutbound(c); err != nil {
+		return err
 	}
 	var cnt int64
 	if err := s.db.Model(&model.Client{}).Where("email = ? AND id <> ?", c.Email, c.ID).Count(&cnt).Error; err != nil {
