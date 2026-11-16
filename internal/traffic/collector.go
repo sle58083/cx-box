@@ -35,7 +35,11 @@ type Config struct {
 	// OverQuota 返回是否存在已启用但超额的客户端；Apply 重新应用配置。
 	OverQuota func(ctx context.Context) (bool, error)
 	Apply     func(ctx context.Context) error
-	Logf      func(format string, args ...any)
+	// IPLimits 返回设置了 IP 数限制的客户端（ID -> 上限）；
+	// ApplyIPBlocks 在封锁集合变化时把集合交给 configsvc 并重新应用。
+	IPLimits      func(ctx context.Context) (map[string]int, error)
+	ApplyIPBlocks func(ctx context.Context, blocks map[string][]string) error
+	Logf          func(format string, args ...any)
 
 	FlushInterval time.Duration // 落库周期，默认 10s
 	EventInterval time.Duration // 向内核订阅的推送周期，默认 5s
@@ -49,6 +53,9 @@ type Collector struct {
 	connected     atomic.Bool
 	lastApply     time.Time
 	lastKnownSync time.Time
+
+	blocker     *ipBlocker
+	lastIPApply time.Time
 }
 
 // refreshKnown 同步已知客户端集合（归因依据）。必须在订阅开始前先同步
@@ -74,7 +81,7 @@ func New(cfg Config) *Collector {
 	if cfg.EventInterval <= 0 {
 		cfg.EventInterval = 5 * time.Second
 	}
-	return &Collector{cfg: cfg, ledger: newLedger()}
+	return &Collector{cfg: cfg, ledger: newLedger(), blocker: newIPBlocker()}
 }
 
 // Connected 返回当前是否与内核 api service 保持着订阅。
@@ -180,6 +187,8 @@ func (c *Collector) flush(ctx context.Context) {
 			return
 		}
 	}
+	c.enforceIPLimit(ctx)
+
 	if c.cfg.OverQuota == nil || c.cfg.Apply == nil {
 		return
 	}
@@ -196,4 +205,33 @@ func (c *Collector) flush(ctx context.Context) {
 	} else {
 		c.cfg.Logf("traffic: 已重新应用配置（剔除超额客户端）")
 	}
+}
+
+// enforceIPLimit 是 IP 数限制的执法环节（每个落库周期跑一次）：账本
+// 给出各客户端的活跃来源 IP，状态机算出应封锁集合；集合变化且距上次
+// 下发超过 30 秒时，把集合交给 configsvc 并重新应用配置（封锁规则以
+// source_ip_cidr + auth_user -> block 的形式进内核配置）。
+func (c *Collector) enforceIPLimit(ctx context.Context) {
+	if c.cfg.IPLimits == nil || c.cfg.ApplyIPBlocks == nil {
+		return
+	}
+	limits, err := c.cfg.IPLimits(ctx)
+	if err != nil {
+		return
+	}
+	// limits 为空也要继续 evaluate：上限被全部关掉时旧封锁要随之清空。
+	snapshot, changed := c.blocker.evaluate(time.Now(), c.ledger.liveIPs(), limits)
+	if !changed {
+		return
+	}
+	if time.Since(c.lastIPApply) < 30*time.Second {
+		return
+	}
+	c.lastIPApply = time.Now()
+	if err := c.cfg.ApplyIPBlocks(ctx, snapshot); err != nil {
+		c.cfg.Logf("traffic: IP 数限制下发失败: %v", err)
+		return
+	}
+	c.blocker.markSent(snapshot)
+	c.cfg.Logf("traffic: IP 数限制封锁集合已更新: %v", snapshot)
 }
