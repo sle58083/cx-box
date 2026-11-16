@@ -83,4 +83,34 @@ func TestGenerateClientOutboundRules(t *testing.T) {
 	if r := findRule(rulesOf(doc), "c4"); r != nil {
 		t.Fatalf("未指定出口不应生成规则, got %v", r)
 	}
+
+	// 多选出口 → 合成 urltest 测速组，规则指向组，组员含所选出站与 direct。
+	doc = gen([]renderer.ProxyUser{{ID: "c5", Name: "c5",
+		OutboundIDs: []string{ob.ID.String(), "direct"}}})
+	rr := findRule(rulesOf(doc), "c5")
+	if rr == nil || rr["outbound"] != "cx-grp-c5" {
+		t.Fatalf("多选应生成指向测速组的规则, got %v", rr)
+	}
+	obs, _ = doc["outbounds"].([]map[string]any)
+	var grp map[string]any
+	for _, o := range obs {
+		if o["tag"] == "cx-grp-c5" {
+			grp = o
+		}
+	}
+	if grp == nil || grp["type"] != "urltest" {
+		t.Fatalf("应合成 urltest 测速组, got %v", grp)
+	}
+	members, _ := grp["outbounds"].([]any)
+	if len(members) != 2 || members[0] != "landing-1" || members[1] != "direct" {
+		t.Fatalf("测速组成员应为 [landing-1 direct], got %v", members)
+	}
+
+	// 多选里混了不存在的出站 → 只保留有效的；剩一个时直达不建组。
+	doc = gen([]renderer.ProxyUser{{ID: "c6", Name: "c6",
+		OutboundIDs: []string{model.NewID().String(), ob.ID.String()}}})
+	rr = findRule(rulesOf(doc), "c6")
+	if rr == nil || rr["outbound"] != "landing-1" {
+		t.Fatalf("多选过滤后剩一个应直达该出站, got %v", rr)
+	}
 }
