@@ -241,10 +241,24 @@ function toast(msg, ms){
 async function api(path, opts={}){
   const headers = {"Content-Type":"application/json"};
   if (token) headers["Authorization"] = "Bearer " + token;
-  const res = await fetch("api/" + path, {method: opts.method || "GET", headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined});
+  // 30 秒超时：慢请求给出明确中文提示，不再无限转圈或只报英文 Failed to fetch。
+  const ctrl = new AbortController();
+  const timer = setTimeout(()=>ctrl.abort(), 30000);
+  let res;
+  try {
+    res = await fetch("api/" + path, {method: opts.method || "GET", headers, signal: ctrl.signal,
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined});
+  } catch(e) {
+    clearTimeout(timer);
+    window.dispatchEvent(new Event("cx-api-settled"));
+    throw new Error(e && e.name === "AbortError"
+      ? "请求超时：服务器 30 秒无响应，请检查网络后重试"
+      : "网络异常：连不上服务器，请检查网络或刷新页面后重试");
+  }
+  clearTimeout(timer);
   let payload = {};
   try { payload = await res.json(); } catch(e) {}
+  window.dispatchEvent(new Event("cx-api-settled"));
   if (res.status === 401){ showLogin(); throw new Error("未登录"); }
   if (!res.ok) throw new Error(payload.error || ("HTTP " + res.status));
   // 保存类接口会自动应用配置；应用失败时数据已保存但不生效，必须显著提示。
@@ -331,6 +345,18 @@ $("applyBtn").addEventListener("click", async ()=>{
 });
 
 /* ---------- 弹层表单 ---------- */
+// 弹窗表单提交期间禁用保存按钮并显示「保存中…」：应用配置要重启内核，
+// 慢的时候看起来像没反应，也防重复点击。请求 settle 后自动恢复。
+document.addEventListener("submit", (e)=>{
+  if (!e.target.closest || !e.target.closest("#modalBox")) return;
+  const btn = e.target.querySelector("button[type=submit]");
+  if (!btn || btn.disabled) return;
+  const oldText = btn.textContent;
+  btn.disabled = true; btn.textContent = "保存中…";
+  const restore = ()=>{ btn.disabled = false; btn.textContent = oldText; };
+  window.addEventListener("cx-api-settled", restore, {once: true});
+  setTimeout(restore, 35000);
+});
 function openModal(html){ $("modalBox").innerHTML = html; $("modalWrap").classList.remove("hidden"); }
 function closeModal(){ $("modalWrap").classList.add("hidden"); $("modalBox").innerHTML = ""; }
 $("modalWrap").addEventListener("click", (e)=>{ if (e.target === $("modalWrap")) closeModal(); });
@@ -391,9 +417,10 @@ function schemaFieldHTML(prefix, f, val, dir){
     <button type="button" class="${prefix}-users-add">+ 添加账号</button>${help}</div>`;
   }
   // selector / urltest 的 outbounds：用已有出站的勾选列表代替 JSON 数组。
-  if (f.key === "outbounds" && f.type === "array" && dir === "outbound" && outboundCache.length){
+  if (f.key === "outbounds" && f.type === "array" && dir === "outbound"){
     const cur = Array.isArray(val) ? val : [];
-    const boxes = outboundCache.map(o=>`<label class="check" style="display:inline-flex;margin:0 14px 4px 0"><input type="checkbox" class="${prefix}-obchk" value="${esc(o.name)}" ${cur.includes(o.name)?"checked":""}><span>${esc(o.name)}（${esc(o.type)}）</span></label>`).join("");
+    const boxes = `<label class="check" style="display:inline-flex;margin:0 14px 4px 0"><input type="checkbox" class="${prefix}-obchk" value="direct" ${cur.includes("direct")?"checked":""}><span>直连（direct）</span></label>` +
+      outboundCache.map(o=>`<label class="check" style="display:inline-flex;margin:0 14px 4px 0"><input type="checkbox" class="${prefix}-obchk" value="${esc(o.name)}" ${cur.includes(o.name)?"checked":""}><span>${esc(o.name)}（${esc(o.type)}）</span></label>`).join("");
     return `<div style="grid-column:1/-1">${label}<div id="${id}" data-skey="${esc(f.key)}" data-stype="obchecks">${boxes}</div>${help}</div>`;
   }
   if (f.type === "select"){
@@ -411,9 +438,32 @@ function schemaFieldHTML(prefix, f, val, dir){
     const v = val === undefined ? "" : JSON.stringify(val);
     return `<div style="grid-column:1/-1">${label}<textarea id="${id}" data-skey="${esc(f.key)}" data-stype="array" spellcheck="false" rows="2" placeholder="JSON 数组">${esc(v)}</textarea>${help}</div>`;
   }
+  // selector 的默认出站：下拉从已勾选的成员里选（含直连），显示中文名，
+  // 不再对着英文 tag 手填。选项由 syncDefaultOptions 按勾选状态刷新。
+  if (f.key === "default" && dir === "outbound"){
+    return `<div>${label}<select id="${id}" data-skey="${esc(f.key)}" data-stype="defaultsel" data-cur="${esc(val || "")}"></select>${help}</div>`;
+  }
   const inputType = f.type === "number" ? "number" : "text";
   const v = val === undefined || val === null ? "" : String(val);
   return `<div>${label}<input id="${id}" data-skey="${esc(f.key)}" data-stype="${esc(f.type)}" type="${inputType}" value="${esc(v)}">${help}</div>`;
+}
+// syncDefaultOptions 刷新 selector「默认出站」下拉：选项 = 已勾选成员 +
+// 直连；已存的旧值不在选项里时也保留显示，避免编辑时把原值弄丢。
+function syncDefaultOptions(prefix){
+  const sel = $(prefix + "-f-default"); if (!sel) return;
+  const prev = sel.value || sel.dataset.cur || "";
+  const checked = Array.from(document.querySelectorAll("." + prefix + "-obchk:checked")).map(x=>x.value);
+  const labelOf = (v)=>{
+    if (v === "direct") return "直连（direct）";
+    const o = outboundCache.find(x=>x.name===v);
+    return o ? v + "（" + o.type + "）" : v;
+  };
+  const vals = [];
+  for (const v of checked) if (!vals.includes(v)) vals.push(v);
+  if (!vals.includes("direct")) vals.push("direct");
+  if (prev && !vals.includes(prev)) vals.unshift(prev);
+  sel.innerHTML = vals.map(v=>`<option value="${esc(v)}" ${v===prev?"selected":""}>${esc(labelOf(v))}</option>`).join("");
+  if (prev && vals.includes(prev)) sel.value = prev;
 }
 function collectSchema(prefix, fields, base){
   const out = asObj(base);
@@ -654,6 +704,8 @@ function renderDynSections(prefix, type, values, createMode){
   const transSel = $(prefix + "TransType");
   if (transSel) transSel.addEventListener("change", ()=>onTransChange(prefix));
   syncSecFields(prefix); syncTransFields(prefix);
+  document.querySelectorAll("." + prefix + "-obchk").forEach(b=>b.addEventListener("change", ()=>syncDefaultOptions(prefix)));
+  syncDefaultOptions(prefix);
   // socks/http 入站账号行编辑：添加按钮与行内删除（事件委托）。
   document.querySelectorAll("[data-stype='userseditor']").forEach(box=>{
     box.addEventListener("click", (e)=>{
@@ -920,10 +972,15 @@ async function loadClients(){
     if (!outboundCache.length) { try{ outboundCache = await api("outbounds"); }catch(e){} }
     clientCache = await api("clients");
     const obName = (c)=>{
-      if (!c.outbound_id) return "默认";
-      if (c.outbound_id === "direct") return "直连";
-      const o = outboundCache.find(x=>x.id===c.outbound_id);
-      return o ? esc(o.name) : "（出站已删除）";
+      const ids = (Array.isArray(c.outbound_ids) && c.outbound_ids.length) ? c.outbound_ids : (c.outbound_id ? [c.outbound_id] : []);
+      if (!ids.length) return "默认";
+      const names = ids.map(id=>{
+        if (id === "direct") return "直连";
+        const o = outboundCache.find(x=>x.id===id);
+        return o ? o.name : "（出站已删除）";
+      });
+      if (names.length === 1) return esc(names[0]);
+      return "测速组：" + names.map(x=>esc(x)).join("、");
     };
     const rows = clientCache.map(c=>`<tr>
       <td><b>${esc(c.email)}</b><div class="small">${esc(c.comment||"")}</div></td>
@@ -931,10 +988,16 @@ async function loadClients(){
       <td>${fmtBytes(c.used_bytes)} / ${c.total_gb? c.total_gb+" GB":"无限"}</td>
       <td>${fmtExpiry(c.expiry_time)}</td>
       <td>${obName(c)}</td>
-      <td style="white-space:nowrap"><button class="primary" onclick="exportSub('${c.id}')">导出订阅</button> <button onclick="copySub('${c.id}')">复制</button> <button onclick="editClient('${c.id}')">编辑</button> <button class="danger" onclick="delClient('${c.id}')">删除</button></td></tr>`).join("");
+      <td style="white-space:nowrap"><button class="primary" onclick="exportSub('${c.id}')">导出订阅</button> <button onclick="copySub('${c.id}')">复制</button> <button onclick="editClient('${c.id}')">编辑</button> <button onclick="resetTraffic('${c.id}')">重置流量</button> <button class="danger" onclick="delClient('${c.id}')">删除</button></td></tr>`).join("");
     $("clientTable").innerHTML = `<table><tr><th>邮箱</th><th>状态</th><th>已用 / 上限</th><th>到期</th><th>出口</th><th>操作</th></tr>${rows || '<tr><td colspan="6" class="small">暂无客户端</td></tr>'}</table>`;
   }catch(e){ toast(e.message); }
 }
+window.resetTraffic = async (id)=>{
+  const c = clientCache.find(x=>x.id===id); if (!c) return;
+  if (!confirm("把客户端 " + c.email + " 的已用流量（当前 " + fmtBytes(c.used_bytes) + "）清零？超额被停用的客户端会恢复可用。")) return;
+  try{ await api("clients/" + id + "/reset-traffic", {method: "POST"}); toast("流量已重置"); loadClients(); }
+  catch(e){ toast(e.message); }
+};
 window.copySub = (id)=>{
   const c = clientCache.find(x=>x.id===id); if (!c) return;
   copyText(subURL(c) + "#" + encodeURIComponent(c.sub_name || c.email || ""));
@@ -1016,11 +1079,10 @@ window.qrNodeLink = async (ix)=>{
   }catch(e){ toast("二维码生成失败，可直接复制链接"); }
 };
 function clientForm(c){
-  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, inbound_ids:[], outbound_id:"", uuid:"", sub_id:"", sub_name:""};
-  const curOb = c.outbound_id || "";
-  const obOpts = [`<option value="" ${curOb===""?"selected":""}>默认（跟随全局出口）</option>`,
-    `<option value="direct" ${curOb==="direct"?"selected":""}>直连（服务器本机 IP）</option>`]
-    .concat(outboundCache.map(o=>`<option value="${o.id}" ${curOb===o.id?"selected":""}>${esc(o.name)}（${esc(o.type)}）</option>`)).join("");
+  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, inbound_ids:[], outbound_id:"", outbound_ids:[], uuid:"", sub_id:"", sub_name:""};
+  const curObs = (Array.isArray(c.outbound_ids) && c.outbound_ids.length) ? c.outbound_ids : (c.outbound_id ? [c.outbound_id] : []);
+  const obChecks = [`<label class="check" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="clObSel" value="direct" ${curObs.includes("direct")?"checked":""}><span>直连（服务器本机 IP）</span></label>`]
+    .concat(outboundCache.map(o=>`<label class="check" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="clObSel" value="${o.id}" ${curObs.includes(o.id)?"checked":""}><span>${esc(o.name)}（${esc(o.type)}）</span></label>`)).join("");
   const selIDs = (Array.isArray(c.inbound_ids) && c.inbound_ids.length) ? c.inbound_ids : (c.inbound_id ? [c.inbound_id] : []);
   const userIns = inboundCache.filter(i=>i.is_user_inbound);
   const inboundChecks = userIns.length ? userIns.map(i=>`<label class="check" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="clInSel" value="${i.id}" ${selIDs.includes(i.id)?"checked":""}><span>${esc(i.name)}（${esc(i.type)}:${i.port}）</span></label>`).join("")
@@ -1035,9 +1097,9 @@ function clientForm(c){
     <div><label>备注</label><input id="clComment" value="${esc(c.comment||"")}"></div></div>
     <label>可用入站（可多选；一个都不勾 = 全部用户入口入站）</label>
     <div style="margin:2px 0 8px">${inboundChecks}</div>
-    <label>出口（这个客户端的流量从哪个 IP 出去）</label>
-    <select id="clOutbound">${obOpts}</select>
-    <p class="small" style="margin:2px 0 8px">默认 = 跟随全局出口（有 selector 时听它的，否则是第一个出站）；直连 = 用服务器本机 IP 出去；选某个出站 = 走那台落地机。每个客户端可以选不同出口。</p>
+    <label>出口（这个客户端的流量从哪个 IP 出去，可多选）</label>
+    <div style="margin:2px 0 4px">${obChecks}</div>
+    <p class="small" style="margin:2px 0 8px">一个都不勾 = 跟随全局默认出口；勾一个 = 走这个出口；勾多个 = 自动组成测速组，走延迟最低的那个。每个客户端可以选不同出口。</p>
     <div class="row"><div><label>UUID（留空自动生成）</label><input id="clUUID" value="${esc(c.uuid||"")}" class="mono"></div>
     <div><label>订阅 ID（留空自动生成）</label><input id="clSubID" value="${esc(c.sub_id||"")}" class="mono"></div></div>
     <label>订阅名称（导入 v2rayN 等客户端时显示的订阅名，可中文；留空 = 用邮箱）</label><input id="clSubName" value="${esc(c.sub_name||"")}">
@@ -1055,7 +1117,8 @@ function clientForm(c){
         total_gb: Number($("clTotal").value)||0, limit_ip: Number($("clLimitIP").value)||0,
         expiry_time: exp, comment: $("clComment").value.trim(),
         inbound_ids: sel, inbound_id: sel.length ? sel[0] : null,
-        outbound_id: $("clOutbound").value, sub_name: $("clSubName").value.trim(),
+        outbound_ids: Array.from(document.querySelectorAll(".clObSel:checked")).map(x=>x.value),
+        outbound_id: "", sub_name: $("clSubName").value.trim(),
         uuid: $("clUUID").value.trim(), sub_id: $("clSubID").value.trim()};
       body["pass" + "word"] = pwVal;
       if (c.id) await api("clients/" + c.id, {method:"PUT", body}); else await api("clients", {method:"POST", body});
