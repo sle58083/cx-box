@@ -172,6 +172,7 @@ func (s *Server) handleStatus(c *gin.Context) {
 		"sub_path":       st.SubPath,
 		"traffic_up":     trafficUp,
 		"traffic_down":   trafficDown,
+		"server":         collectServerStats(),
 	})
 }
 
@@ -218,7 +219,7 @@ func (s *Server) handleSetCredentials(c *gin.Context) {
 
 func (s *Server) handleApply(c *gin.Context) {
 	if s.cfg == nil {
-		failMsg(c, http.StatusServiceUnavailable, "sing-box 内核未就绪（启动时下载失败？）")
+		failMsg(c, http.StatusServiceUnavailable, "内核未就绪（启动时下载失败？）")
 		return
 	}
 	if err := s.cfg.Apply(c.Request.Context()); err != nil {
