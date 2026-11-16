@@ -1079,7 +1079,7 @@ window.qrNodeLink = async (ix)=>{
   }catch(e){ toast("二维码生成失败，可直接复制链接"); }
 };
 function clientForm(c){
-  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, inbound_ids:[], outbound_id:"", outbound_ids:[], uuid:"", sub_id:"", sub_name:""};
+  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, inbound_ids:[], outbound_id:"", outbound_ids:[], uuid:"", sub_id:"", sub_name:"", sub_no_direct:false};
   const curObs = (Array.isArray(c.outbound_ids) && c.outbound_ids.length) ? c.outbound_ids : (c.outbound_id ? [c.outbound_id] : []);
   const obChecks = [`<label class="check" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="clObSel" value="direct" ${curObs.includes("direct")?"checked":""}><span>直连（服务器本机 IP）</span></label>`]
     .concat(outboundCache.map(o=>`<label class="check" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="clObSel" value="${o.id}" ${curObs.includes(o.id)?"checked":""}><span>${esc(o.name)}（${esc(o.type)}）</span></label>`)).join("");
@@ -1092,7 +1092,7 @@ function clientForm(c){
   <form id="clForm">
     <label>邮箱（唯一标识）</label><input id="clEmail" value="${esc(c.email)}" required>
     <div class="row"><div><label>流量上限 GB（0=无限）</label><input id="clTotal" type="number" min="0" value="${c.total_gb||0}"></div>
-    <div><label>IP 数限制（0=不限）</label><input id="clLimitIP" type="number" min="0" value="${c.limit_ip||0}"></div></div>
+    <div><label>IP 数限制（0=不限；超限的新来源 IP 会被拒绝）</label><input id="clLimitIP" type="number" min="0" value="${c.limit_ip||0}"></div></div>
     <div class="row"><div><label>到期时间（留空=永不过期）</label><input id="clExpiry" type="datetime-local" value="${dtVal}"></div>
     <div><label>备注</label><input id="clComment" value="${esc(c.comment||"")}"></div></div>
     <label>可用入站（可多选；一个都不勾 = 全部用户入口入站）</label>
@@ -1100,6 +1100,7 @@ function clientForm(c){
     <label>出口（这个客户端的流量从哪个 IP 出去，可多选）</label>
     <div style="margin:2px 0 4px">${obChecks}</div>
     <p class="small" style="margin:2px 0 8px">一个都不勾 = 跟随全局默认出口；勾一个 = 走这个出口；勾多个 = 自动组成测速组，走延迟最低的那个。每个客户端可以选不同出口。</p>
+    <div class="check" style="margin:0 0 8px"><input type="checkbox" id="clSubNoDirect" ${c.sub_no_direct?"checked":""}><span>订阅中不生成「直连」节点（出口里勾了直连时，订阅里不额外出现直连节点）</span></div>
     <div class="row"><div><label>UUID（留空自动生成）</label><input id="clUUID" value="${esc(c.uuid||"")}" class="mono"></div>
     <div><label>订阅 ID（留空自动生成）</label><input id="clSubID" value="${esc(c.sub_id||"")}" class="mono"></div></div>
     <label>订阅名称（导入 v2rayN 等客户端时显示的订阅名，可中文；留空 = 用邮箱）</label><input id="clSubName" value="${esc(c.sub_name||"")}">
@@ -1118,7 +1119,7 @@ function clientForm(c){
         expiry_time: exp, comment: $("clComment").value.trim(),
         inbound_ids: sel, inbound_id: sel.length ? sel[0] : null,
         outbound_ids: Array.from(document.querySelectorAll(".clObSel:checked")).map(x=>x.value),
-        outbound_id: "", sub_name: $("clSubName").value.trim(),
+        outbound_id: "", sub_name: $("clSubName").value.trim(), sub_no_direct: $("clSubNoDirect").checked,
         uuid: $("clUUID").value.trim(), sub_id: $("clSubID").value.trim()};
       body["pass" + "word"] = pwVal;
       if (c.id) await api("clients/" + c.id, {method:"PUT", body}); else await api("clients", {method:"POST", body});
