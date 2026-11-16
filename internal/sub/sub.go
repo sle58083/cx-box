@@ -60,6 +60,27 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 		UUID:     client.UUID,
 		Password: pw,
 	}
+	// 客户端已选出口解析为 (ID, 显示名)：订阅为每个出口额外生成一条
+	// 派生链接（节点名带出口名），用户在客户端里点哪个节点走哪个出口。
+	// 已删除的出站跳过；direct 显示为「直连」。
+	type obRef struct{ id, name string }
+	var obRefs []obRef
+	seenOb := map[string]bool{}
+	for _, obID := range client.SelectedOutboundIDs() {
+		if seenOb[obID] {
+			continue
+		}
+		seenOb[obID] = true
+		if obID == "direct" {
+			obRefs = append(obRefs, obRef{obID, "直连"})
+			continue
+		}
+		var o model.Outbound
+		if err := g.db.First(&o, "id = ?", obID).Error; err == nil {
+			obRefs = append(obRefs, obRef{obID, o.Name})
+		}
+	}
+
 	var links []string
 	for _, in := range inbounds {
 		r, ok := renderer.Get(in.Type)
@@ -91,6 +112,21 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 			continue // 该协议无标准订阅格式或参数不全，跳过
 		}
 		links = append(links, uri)
+		// 派生链接：与基础链接同入站，凭据换成派生凭据（入站侧有对应
+		// 派生用户，路由直达该出口），节点名后缀出口名以便客户端里选。
+		for _, obr := range obRefs {
+			dob := ob
+			dob.Name = in.Name + " · " + obr.name
+			duser := renderer.ProxyUser{
+				ID:   user.ID,
+				Name: user.Name,
+				UUID: renderer.DerivedUUID(client.UUID, obr.id),
+			}
+			duser.Password = renderer.DerivedPassword(pw, obr.id)
+			if duri, derr := r.SubscriptionURI(dob, duser); derr == nil {
+				links = append(links, duri)
+			}
+		}
 	}
 	return links, client, nil
 }
