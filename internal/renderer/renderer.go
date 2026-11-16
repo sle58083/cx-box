@@ -7,8 +7,12 @@ package renderer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/sle58083/cx-box/internal/model"
 )
@@ -130,4 +134,44 @@ func hasDirection(meta ProtocolMeta, d Direction) bool {
 		}
 	}
 	return false
+}
+
+// ---- 派生用户（一个客户端的多个出口在订阅里可选）----
+//
+// 客户端选了多个出口时，除了基础用户（跟随其出口选择/测速组），还为每个
+// 出口派生一个独立用户：入站同时接受基础与派生凭据，路由按派生用户名把
+// 流量送到对应出口；订阅为每个出口生成一条独立链接（节点名带出口名），
+// 用户在客户端里点哪个节点就走哪个出口。派生凭据由客户端凭据 + 出口 ID
+// 确定性推导，configsvc 与 sub 两侧同源同值，无需落库。
+
+// DerivedSep 是派生用户名中客户端 ID 与出口 ID 的分隔符。
+const DerivedSep = "#"
+
+// DerivedUserName 生成派生用户在入站 users 中的名字（auth_user 匹配键）。
+func DerivedUserName(clientID, outboundID string) string {
+	return clientID + DerivedSep + outboundID
+}
+
+// BaseClientID 从用户名反解基础客户端 ID：派生名返回分隔符前段，
+// 基础用户名（本身即客户端 ID）原样返回。流量归因用。
+func BaseClientID(userName string) string {
+	if i := strings.Index(userName, DerivedSep); i >= 0 {
+		return userName[:i]
+	}
+	return userName
+}
+
+// DerivedUUID 由客户端 UUID 与出口 ID 确定性推导派生用户的 UUID。
+func DerivedUUID(clientUUID, outboundID string) string {
+	sum := sha256.Sum256([]byte(clientUUID + "|" + outboundID))
+	b := sum[:16]
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// DerivedPassword 由客户端密码与出口 ID 确定性推导派生用户的密码。
+func DerivedPassword(clientPassword, outboundID string) string {
+	sum := sha256.Sum256([]byte(clientPassword + "|" + outboundID))
+	return hex.EncodeToString(sum[:])[:32]
 }
