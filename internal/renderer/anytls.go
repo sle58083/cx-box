@@ -216,7 +216,7 @@ func (r *AnyTLSRenderer) Meta() ProtocolMeta {
 			{Key: "idle_session_check_interval", Label: "会话检查间隔", Type: "duration", Required: false},
 			{Key: "idle_session_timeout", Label: "会话空闲超时", Type: "duration", Required: false},
 			{Key: "min_idle_session", Label: "最小空闲会话数", Type: "number", Required: false},
-			{Key: "client_metadata", Label: "Client Metadata", Type: "text", Required: false},
+			{Key: "client_metadata", Label: "客户端元数据", Type: "text", Required: false},
 		},
 	}
 }
