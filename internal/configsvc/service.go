@@ -126,13 +126,19 @@ func (s *Service) Apply(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(configPath, raw, 0o644); err != nil {
+	// 先写临时文件校验，通过后才原子替换正式文件：校验失败时磁盘上
+	// 保留上一份好配置，服务重启不会因坏文件起不来内核（旧实现先覆盖
+	// 再校验，坏文件会留盘）。
+	tmpPath := configPath + ".tmp"
+	defer os.Remove(tmpPath)
+	if err := os.WriteFile(tmpPath, raw, 0o644); err != nil {
 		return fmt.Errorf("configsvc: 写盘失败: %w", err)
 	}
-
-	// 校验 + 重启
-	if err := s.kernel.Check(); err != nil {
+	if err := s.kernel.CheckFile(tmpPath); err != nil {
 		return err
+	}
+	if err := os.Rename(tmpPath, configPath); err != nil {
+		return fmt.Errorf("configsvc: 写盘失败: %w", err)
 	}
 	return s.kernel.Restart(ctx)
 }
@@ -163,6 +169,13 @@ func (s *Service) resolveCertBindings(ctx context.Context, inbounds []model.Inbo
 			if tls == nil {
 				tls = map[string]any{}
 			}
+		}
+		// Reality 不使用证书文件：绑了证书的 Reality 入站若注入证书路径，
+		// sing-box 校验直接 FATAL（certificate is unavailable in reality），
+		// 整份配置无法应用（真机踩中：内核一直跑旧配置、新客户端全部
+		// unknown UUID）。Reality 入站跳过证书路径注入。
+		if _, hasReality := tls["reality"]; hasReality {
+			continue
 		}
 		if _, ok := tls["certificate_path"]; !ok {
 			tls["certificate_path"] = certFile
@@ -279,6 +292,26 @@ func (s *Service) activeUsers(ctx context.Context) ([]renderer.ProxyUser, error)
 			OutboundIDs: c.SelectedOutboundIDs(),
 			Password:    c.Password,
 		})
+		// 派生用户：为每个已选出口生成一个独立用户（凭据由客户端凭据
+		// 确定性推导），订阅里每个出口一条独立链接，用户在客户端点哪个
+		// 节点就走哪个出口；路由按派生用户名直达对应出口。
+		seenOb := map[string]bool{}
+		for _, obID := range c.SelectedOutboundIDs() {
+			if seenOb[obID] {
+				continue // 出口列表去重，避免同名派生用户重复注入
+			}
+			seenOb[obID] = true
+			du := renderer.ProxyUser{
+				ID:          c.ID.String(),
+				Name:        renderer.DerivedUserName(c.ID.String(), obID),
+				UUID:        renderer.DerivedUUID(c.UUID, obID),
+				InboundIDs:  c.SelectedInboundIDs(),
+				OutboundID:  obID,
+				OutboundIDs: []string{obID},
+			}
+			du.Password = renderer.DerivedPassword(c.Password, obID)
+			users = append(users, du)
+		}
 	}
 	return users, nil
 }
