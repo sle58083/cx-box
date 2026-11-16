@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -24,6 +25,37 @@ type Service struct {
 	db        *gorm.DB
 	generator *Generator
 	kernel    *kernel.Manager
+
+	// ipBlocks 是 IP 数限制的当前封锁集合（客户端 ID → 被拒来源 IP），
+	// 由流量采集器检测超限后经 SetIPBlocks 注入，随每次 Generate 生效。
+	ipMu     sync.Mutex
+	ipBlocks map[string][]string
+}
+
+// SetIPBlocks 更新 IP 数限制的封锁集合（采集器在集合变化时调用，
+// 随后触发 Apply 让新配置生效）。
+func (s *Service) SetIPBlocks(blocks map[string][]string) {
+	s.ipMu.Lock()
+	defer s.ipMu.Unlock()
+	cp := make(map[string][]string, len(blocks))
+	for k, v := range blocks {
+		cp[k] = append([]string(nil), v...)
+	}
+	s.ipBlocks = cp
+}
+
+// ipBlocksSnapshot 返回封锁集合的副本（Generate 用）。
+func (s *Service) ipBlocksSnapshot() map[string][]string {
+	s.ipMu.Lock()
+	defer s.ipMu.Unlock()
+	if len(s.ipBlocks) == 0 {
+		return nil
+	}
+	cp := make(map[string][]string, len(s.ipBlocks))
+	for k, v := range s.ipBlocks {
+		cp[k] = append([]string(nil), v...)
+	}
+	return cp
 }
 
 // NewService 构造配置服务。
@@ -80,6 +112,7 @@ func (s *Service) Generate(ctx context.Context) (map[string]any, error) {
 		Rules:      rules,
 		ProxyUsers: users,
 		APISecret:  secret,
+		IPBlocks:   s.ipBlocksSnapshot(),
 	})
 }
 
