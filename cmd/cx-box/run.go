@@ -74,6 +74,21 @@ func runServer() {
 					return n > 0, err
 				},
 				Apply: func(ctx context.Context) error { return cfg.Apply(ctx) },
+				IPLimits: func(ctx context.Context) (map[string]int, error) {
+					var clients []model.Client
+					if err := g.WithContext(ctx).Where("limit_ip > 0").Find(&clients).Error; err != nil {
+						return nil, err
+					}
+					m := make(map[string]int, len(clients))
+					for _, cl := range clients {
+						m[cl.ID.String()] = cl.LimitIP
+					}
+					return m, nil
+				},
+				ApplyIPBlocks: func(ctx context.Context, blocks map[string][]string) error {
+					cfg.SetIPBlocks(blocks)
+					return cfg.Apply(ctx)
+				},
 			})
 			go collector.Run(ctx)
 		}
