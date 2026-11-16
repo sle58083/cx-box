@@ -864,14 +864,22 @@ async function loadClients(){
   try{
     if (!statusData) await loadStatus();
     if (!inboundCache.length) { try{ inboundCache = await api("inbounds"); }catch(e){} }
+    if (!outboundCache.length) { try{ outboundCache = await api("outbounds"); }catch(e){} }
     clientCache = await api("clients");
+    const obName = (c)=>{
+      if (!c.outbound_id) return "默认";
+      if (c.outbound_id === "direct") return "直连";
+      const o = outboundCache.find(x=>x.id===c.outbound_id);
+      return o ? esc(o.name) : "（出站已删除）";
+    };
     const rows = clientCache.map(c=>`<tr>
       <td><b>${esc(c.email)}</b><div class="small">${esc(c.comment||"")}</div></td>
       <td>${c.enable?"启用":"禁用"}</td>
       <td>${fmtBytes(c.used_bytes)} / ${c.total_gb? c.total_gb+" GB":"无限"}</td>
       <td>${fmtExpiry(c.expiry_time)}</td>
+      <td>${obName(c)}</td>
       <td style="white-space:nowrap"><button class="primary" onclick="exportSub('${c.id}')">导出订阅</button> <button onclick="copySub('${c.id}')">复制</button> <button onclick="editClient('${c.id}')">编辑</button> <button class="danger" onclick="delClient('${c.id}')">删除</button></td></tr>`).join("");
-    $("clientTable").innerHTML = `<table><tr><th>邮箱</th><th>状态</th><th>已用 / 上限</th><th>到期</th><th>操作</th></tr>${rows || '<tr><td colspan="5" class="small">暂无客户端</td></tr>'}</table>`;
+    $("clientTable").innerHTML = `<table><tr><th>邮箱</th><th>状态</th><th>已用 / 上限</th><th>到期</th><th>出口</th><th>操作</th></tr>${rows || '<tr><td colspan="6" class="small">暂无客户端</td></tr>'}</table>`;
   }catch(e){ toast(e.message); }
 }
 window.copySub = (id)=>{
@@ -954,7 +962,11 @@ window.qrNodeLink = async (ix)=>{
   }catch(e){ toast("二维码生成失败，可直接复制链接"); }
 };
 function clientForm(c){
-  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, inbound_ids:[], uuid:"", sub_id:""};
+  c = c || {email:"", enable:true, limit_ip:0, total_gb:0, expiry_time:0, comment:"", inbound_id:null, inbound_ids:[], outbound_id:"", uuid:"", sub_id:""};
+  const curOb = c.outbound_id || "";
+  const obOpts = [`<option value="" ${curOb===""?"selected":""}>默认（跟随全局出口）</option>`,
+    `<option value="direct" ${curOb==="direct"?"selected":""}>直连（服务器本机 IP）</option>`]
+    .concat(outboundCache.map(o=>`<option value="${o.id}" ${curOb===o.id?"selected":""}>${esc(o.name)}（${esc(o.type)}）</option>`)).join("");
   const selIDs = (Array.isArray(c.inbound_ids) && c.inbound_ids.length) ? c.inbound_ids : (c.inbound_id ? [c.inbound_id] : []);
   const userIns = inboundCache.filter(i=>i.is_user_inbound);
   const inboundChecks = userIns.length ? userIns.map(i=>`<label class="check" style="display:inline-flex;margin:0 14px 6px 0"><input type="checkbox" class="clInSel" value="${i.id}" ${selIDs.includes(i.id)?"checked":""}><span>${esc(i.name)}（${esc(i.type)}:${i.port}）</span></label>`).join("")
@@ -969,6 +981,9 @@ function clientForm(c){
     <div><label>备注</label><input id="clComment" value="${esc(c.comment||"")}"></div></div>
     <label>可用入站（可多选；一个都不勾 = 全部用户入口入站）</label>
     <div style="margin:2px 0 8px">${inboundChecks}</div>
+    <label>出口（这个客户端的流量从哪个 IP 出去）</label>
+    <select id="clOutbound">${obOpts}</select>
+    <p class="small" style="margin:2px 0 8px">默认 = 跟随全局出口（有 selector 时听它的，否则是第一个出站）；直连 = 用服务器本机 IP 出去；选某个出站 = 走那台落地机。每个客户端可以选不同出口。</p>
     <div class="row"><div><label>UUID（留空自动生成）</label><input id="clUUID" value="${esc(c.uuid||"")}" class="mono"></div>
     <div><label>订阅 ID（留空自动生成）</label><input id="clSubID" value="${esc(c.sub_id||"")}" class="mono"></div></div>
     <label>协议密码（留空自动生成；trojan/ss/hysteria2 等使用）</label><input id="clPass" value="${esc(c.password||"")}" class="mono">
@@ -985,6 +1000,7 @@ function clientForm(c){
         total_gb: Number($("clTotal").value)||0, limit_ip: Number($("clLimitIP").value)||0,
         expiry_time: exp, comment: $("clComment").value.trim(),
         inbound_ids: sel, inbound_id: sel.length ? sel[0] : null,
+        outbound_id: $("clOutbound").value,
         uuid: $("clUUID").value.trim(), sub_id: $("clSubID").value.trim()};
       body["pass" + "word"] = pwVal;
       if (c.id) await api("clients/" + c.id, {method:"PUT", body}); else await api("clients", {method:"POST", body});
@@ -992,13 +1008,13 @@ function clientForm(c){
     }catch(err){ toast(err.message); }
   });
 }
-window.editClient = (id)=> clientForm(clientCache.find(x=>x.id===id));
+window.editClient = async (id)=>{ if (!outboundCache.length) { try{ outboundCache = await api("outbounds"); }catch(e){} } clientForm(clientCache.find(x=>x.id===id)); };
 window.delClient = async (id)=>{
   const it = clientCache.find(x=>x.id===id);
   if (!confirm("删除客户端 " + (it ? it.email : id) + "？")) return;
   try{ await api("clients/" + id, {method:"DELETE"}); toast("已删除"); loadClients(); }catch(e){ toast(e.message); }
 };
-$("addClientBtn").addEventListener("click", async ()=>{ if (!inboundCache.length) { try{ inboundCache = await api("inbounds"); }catch(e){} } clientForm(null); });
+$("addClientBtn").addEventListener("click", async ()=>{ if (!inboundCache.length) { try{ inboundCache = await api("inbounds"); }catch(e){} } if (!outboundCache.length) { try{ outboundCache = await api("outbounds"); }catch(e){} } clientForm(null); });
 
 /* ---------- 设置 ---------- */
 async function loadSettings(){
