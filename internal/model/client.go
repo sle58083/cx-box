@@ -18,6 +18,7 @@ type Client struct {
 	Comment       string  `gorm:"type:varchar(255)" json:"comment"`
 	InboundID     *string `gorm:"type:text;index" json:"inbound_id"`      // 绑定的入站（可空=全部用户入口入站）
 	InboundIDs    string  `gorm:"type:text" json:"-"`                     // 多选入站 ID 列表（JSON []string）；非空时优先于 InboundID
+	OutboundID    string  `gorm:"type:varchar(64)" json:"outbound_id"`    // 指定出口：空=跟随全局默认；"direct"=直连；否则为出站 ID
 	ResetStrategy string  `gorm:"type:varchar(32)" json:"reset_strategy"` // 流量重置策略（s-ui 兼容字段）
 }
 
