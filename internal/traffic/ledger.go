@@ -10,6 +10,9 @@ package traffic
 // 事件带最终总量，按 总量 - base 补齐尾巴。
 
 import (
+	"sort"
+	"time"
+
 	"github.com/sle58083/cx-box/internal/daemonpb"
 	"github.com/sle58083/cx-box/internal/renderer"
 	"github.com/sle58083/cx-box/internal/service"
@@ -27,15 +30,31 @@ type ledger struct {
 	attr    map[string]aggKey   // connID -> 归因（UPDATE 事件不带连接信息，靠它）
 	known   map[string]bool     // 已知客户端 ID 集合（user 归因校验）
 	pending map[aggKey][2]int64 // 待落库增量
+
+	// IP 数限制：连接来源跟踪（仅归因到客户端的连接）。IP 的计数用
+	// 滑动窗口语义：窗口内（ipLiveGrace）有过连接的 IP 都算「在用」，
+	// 避免不同来源交替连接时封锁集合反复横跳。
+	src       map[string]connSrc   // connID -> 来源（客户端 + IP）
+	firstSeen map[string]time.Time // clientID|ip -> 窗口内首次出现（放行名额排序依据）
+	lastSeen  map[string]time.Time // clientID|ip -> 最近一次连接活动
+}
+
+// connSrc 是一条活跃连接的来源（IP 数限制用）。
+type connSrc struct {
+	clientID string
+	ip       string
 }
 
 func newLedger() *ledger {
 	return &ledger{
-		base:    map[string][2]int64{},
-		closed:  map[string]bool{},
-		attr:    map[string]aggKey{},
-		known:   map[string]bool{},
-		pending: map[aggKey][2]int64{},
+		base:      map[string][2]int64{},
+		closed:    map[string]bool{},
+		attr:      map[string]aggKey{},
+		known:     map[string]bool{},
+		pending:   map[aggKey][2]int64{},
+		src:       map[string]connSrc{},
+		firstSeen: map[string]time.Time{},
+		lastSeen:  map[string]time.Time{},
 	}
 }
 
@@ -77,8 +96,12 @@ func (l *ledger) applyBatch(b *daemonpb.ConnectionEvents) {
 	}
 	if b.Reset_ {
 		inBatch := make(map[string]bool, len(b.Events))
+		inLive := make(map[string]bool, len(b.Events))
 		for _, ev := range b.Events {
 			inBatch[ev.Id] = true
+			if ev.Connection != nil && ev.Connection.ClosedAt == 0 {
+				inLive[ev.Id] = true
+			}
 			l.applyInitial(ev)
 		}
 		// 修剪：已关闭且服务端不再上报的连接，其墓碑已完成使命。
@@ -87,6 +110,13 @@ func (l *ledger) applyBatch(b *daemonpb.ConnectionEvents) {
 				delete(l.base, id)
 				delete(l.attr, id)
 				delete(l.closed, id)
+			}
+		}
+		// 来源跟踪对齐：不在本批活跃集合里的连接视为已消失（服务端
+		// 订阅空窗期关闭的连接可能没有 CLOSED 事件到账）。
+		for id := range l.src {
+			if !inLive[id] {
+				l.untrackConn(id)
 			}
 		}
 		return
@@ -120,6 +150,9 @@ func (l *ledger) applyInitial(ev *daemonpb.ConnectionEvent) {
 	l.attr[ev.Id] = key
 	if conn.ClosedAt > 0 {
 		l.closed[ev.Id] = true
+		l.untrackConn(ev.Id)
+	} else {
+		l.trackConn(ev.Id, key.clientID, conn.Source)
 	}
 }
 
@@ -130,7 +163,9 @@ func (l *ledger) register(ev *daemonpb.ConnectionEvent) {
 		return
 	}
 	l.base[ev.Id] = [2]int64{conn.UplinkTotal, conn.DownlinkTotal}
-	l.attr[ev.Id] = l.keyOf(conn)
+	key := l.keyOf(conn)
+	l.attr[ev.Id] = key
+	l.trackConn(ev.Id, key.clientID, conn.Source)
 }
 
 // applyUpdate 入账服务端算好的增量。
@@ -149,6 +184,7 @@ func (l *ledger) applyClosed(ev *daemonpb.ConnectionEvent) {
 	conn := ev.Connection
 	if conn == nil {
 		l.closed[ev.Id] = true
+		l.untrackConn(ev.Id)
 		return
 	}
 	totals := [2]int64{conn.UplinkTotal, conn.DownlinkTotal}
@@ -161,6 +197,7 @@ func (l *ledger) applyClosed(ev *daemonpb.ConnectionEvent) {
 	l.base[ev.Id] = totals
 	l.attr[ev.Id] = key
 	l.closed[ev.Id] = true
+	l.untrackConn(ev.Id)
 }
 
 // drain 取出全部待落库增量并清空。
@@ -186,4 +223,93 @@ func (l *ledger) requeue(deltas []service.UsageDelta) {
 	for _, d := range deltas {
 		l.addPending(aggKey{clientID: d.ClientID, inbound: d.InboundTag}, d.Up, d.Down)
 	}
+}
+
+// ipLiveGrace 是 IP 计数的滑动窗口：窗口内有过连接活动的 IP 都算
+// 「在用」。与封锁保持期同为 10 分钟，语义一致。
+const ipLiveGrace = 10 * time.Minute
+
+// trackConn 登记一条活跃连接的来源（IP 数限制用）。归因不到客户端
+// （入站级连接）或来源为空时不跟踪。
+func (l *ledger) trackConn(connID, clientID, source string) {
+	if clientID == "" {
+		return
+	}
+	ip := sourceIP(source)
+	if ip == "" {
+		return
+	}
+	l.src[connID] = connSrc{clientID: clientID, ip: ip}
+	key := clientID + "|" + ip
+	now := time.Now()
+	if _, ok := l.firstSeen[key]; !ok {
+		l.firstSeen[key] = now
+	}
+	l.lastSeen[key] = now
+}
+
+// untrackConn 注销一条连接的来源跟踪，并把该 IP 的最近活动时间记到
+// 现在（窗口期内它仍算「在用」）。
+func (l *ledger) untrackConn(connID string) {
+	s, ok := l.src[connID]
+	if !ok {
+		return
+	}
+	delete(l.src, connID)
+	l.lastSeen[s.clientID+"|"+s.ip] = time.Now()
+}
+
+// liveIPs 返回每个客户端在计数窗口内的来源 IP（有活跃连接、或最近
+// 活动在窗口内的 IP），按窗口内首次出现升序；顺手修剪过期记录。
+func (l *ledger) liveIPs() map[string][]ipLive {
+	now := time.Now()
+	byClient := make(map[string]map[string]bool)
+	mark := func(clientID, ip string) {
+		if byClient[clientID] == nil {
+			byClient[clientID] = make(map[string]bool)
+		}
+		byClient[clientID][ip] = true
+	}
+	for _, s := range l.src {
+		mark(s.clientID, s.ip)
+	}
+	for key, last := range l.lastSeen {
+		if now.Sub(last) < ipLiveGrace {
+			clientID, ip := splitFirstSeenKey(key)
+			mark(clientID, ip)
+		}
+	}
+	out := make(map[string][]ipLive, len(byClient))
+	for clientID, ips := range byClient {
+		list := make([]ipLive, 0, len(ips))
+		for ip := range ips {
+			list = append(list, ipLive{IP: ip, FirstSeen: l.firstSeen[clientID+"|"+ip]})
+		}
+		sort.Slice(list, func(i, j int) bool {
+			if !list[i].FirstSeen.Equal(list[j].FirstSeen) {
+				return list[i].FirstSeen.Before(list[j].FirstSeen)
+			}
+			return list[i].IP < list[j].IP
+		})
+		out[clientID] = list
+	}
+	for key, last := range l.lastSeen {
+		clientID, ip := splitFirstSeenKey(key)
+		if byClient[clientID] == nil || !byClient[clientID][ip] || now.Sub(last) >= ipLiveGrace {
+			delete(l.lastSeen, key)
+			delete(l.firstSeen, key)
+		}
+	}
+	return out
+}
+
+// splitFirstSeenKey 从后往前找分隔符拆 firstSeen 的 key（IP 本身不含
+// '|'，客户端 ID 是 UUID 也不含，从后拆最稳）。
+func splitFirstSeenKey(key string) (clientID, ip string) {
+	for i := len(key) - 1; i >= 0; i-- {
+		if key[i] == '|' {
+			return key[:i], key[i+1:]
+		}
+	}
+	return key, ""
 }
