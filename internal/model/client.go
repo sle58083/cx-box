@@ -16,6 +16,7 @@ type Client struct {
 	UsedBytes     int64   `gorm:"not null;default:0" json:"used_bytes"`       // 已用流量
 	SubID         string  `gorm:"type:varchar(64);uniqueIndex" json:"sub_id"` // 订阅 ID（用于订阅链接）
 	SubName       string  `gorm:"type:varchar(128)" json:"sub_name"`          // 订阅名称（导入客户端时显示；空 = 用邮箱）
+	SubNoDirect   bool    `gorm:"not null;default:false" json:"sub_no_direct"` // 订阅中不生成「直连」派生节点
 	Comment       string  `gorm:"type:varchar(255)" json:"comment"`
 	InboundID     *string `gorm:"type:text;index" json:"inbound_id"`      // 绑定的入站（可空=全部用户入口入站）
 	InboundIDs    string  `gorm:"type:text" json:"-"`                     // 多选入站 ID 列表（JSON []string）；非空时优先于 InboundID
