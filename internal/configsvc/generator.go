@@ -2,12 +2,27 @@ package configsvc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/sle58083/cx-box/internal/model"
 	"github.com/sle58083/cx-box/internal/renderer"
 )
+
+// ssInboundHasPassword 判断 ss 入站是否在 settings 里设了静态密码。
+func ssInboundHasPassword(cfg model.Inbound) bool {
+	if len(cfg.Settings) == 0 {
+		return false
+	}
+	var s struct {
+		P string `json:"password"`
+	}
+	if err := json.Unmarshal(cfg.Settings, &s); err != nil {
+		return false
+	}
+	return s.P != ""
+}
 
 // ErrUnknownProtocol 表示未注册的协议类型。
 var ErrUnknownProtocol = errors.New("configsvc: unknown protocol")
@@ -58,6 +73,13 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 		var users []renderer.ProxyUser
 		if cfg.IsUserInbound {
 			users = usersForInbound(ctx.ProxyUsers, cfg.ID.String())
+		}
+		// shadowsocks 用户入口在「无客户端且未设静态密码」时没有任何凭据，
+		// sing-box 会以 missing password 拒绝整份配置（连累其他入站一起
+		// 起不来，实测其余协议空 users 均可启动）。这种入站此时无人可连，
+		// 跳过生成；建好客户端后下一次（自动）应用会自动带上它。
+		if cfg.Type == "shadowsocks" && cfg.IsUserInbound && len(users) == 0 && !ssInboundHasPassword(cfg) {
+			continue
 		}
 		el, err := r.RenderInbound(&renderer.RenderContext{Ctx: context.Background(), Users: users}, cfg, users)
 		if err != nil {
