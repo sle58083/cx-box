@@ -102,9 +102,17 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 		outbounds = append(outbounds, el)
 	}
 
-	// 兜底直连：无任何出站时注入默认 direct，避免 route.final="direct" 引用不存在的
-	// tag 导致 sing-box 启动失败（"default outbound not found: direct"）。
-	if len(outbounds) == 0 {
+	// 兜底直连：保证 tag=direct 的出站存在——route.final 的兜底值与
+	// 「客户端指定直连出口」的路由规则都会引用它，缺失会让 sing-box 以
+	// "default outbound not found: direct" 拒绝整份配置。已有同名 tag 时不重复加。
+	hasDirect := false
+	for _, el := range outbounds {
+		if el[kTag] == "direct" {
+			hasDirect = true
+			break
+		}
+	}
+	if !hasDirect {
 		outbounds = append(outbounds, map[string]any{kType: "direct", kTag: "direct"})
 	}
 
@@ -132,8 +140,45 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 		}}
 	}
 	global.RouteFinal = resolveRouteFinal(outbounds)
-	applyGlobalTemplate(doc, global, ctx.Rules)
+	// 客户端级出口：为指定了出口的客户端合成按 user 匹配的路由规则，
+	// 放在通用路由规则之前（优先命中），未指定的走 route.final 全局默认。
+	rules := clientOutboundRules(ctx.ProxyUsers, enabledOutbounds)
+	rules = append(rules, ctx.Rules...)
+	applyGlobalTemplate(doc, global, rules)
 	return doc, nil
+}
+
+// clientOutboundRules 把客户端的出口选择翻译成路由规则：sing-box 按
+// 连接的认证 user（即入站 users[].name = 客户端 ID）匹配。OutboundID 为
+// 空的不生成规则（走全局默认）；"direct" 直连；其余按出站 ID 解析成
+// tag（出站名称）。出站已被删除/禁用时跳过该规则，客户端回落全局默认，
+// 不让一个失效引用拖垮整份配置。
+func clientOutboundRules(users []renderer.ProxyUser, outbounds []model.Outbound) []model.RoutingRule {
+	tagByID := make(map[string]string, len(outbounds))
+	for _, o := range outbounds {
+		tagByID[o.ID.String()] = o.Name
+	}
+	var rules []model.RoutingRule
+	for _, u := range users {
+		if u.OutboundID == "" {
+			continue
+		}
+		tag := u.OutboundID
+		if tag != "direct" {
+			t, ok := tagByID[tag]
+			if !ok {
+				continue
+			}
+			tag = t
+		}
+		rules = append(rules, model.RoutingRule{
+			RuleType:    "user",
+			Value:       u.Name,
+			OutboundTag: tag,
+			Enabled:     true,
+		})
+	}
+	return rules
 }
 
 // usersForInbound 过滤出可注入某个入站的客户端：未做入站选择的（InboundIDs
