@@ -11,6 +11,7 @@ package traffic
 
 import (
 	"github.com/sle58083/cx-box/internal/daemonpb"
+	"github.com/sle58083/cx-box/internal/renderer"
 	"github.com/sle58083/cx-box/internal/service"
 )
 
@@ -44,8 +45,13 @@ func (l *ledger) setKnownClients(ids map[string]bool) { l.known = ids }
 // 端 ID；不在已知集合里（或为空，如非用户入站的连接）记为入站级流量。
 func (l *ledger) keyOf(conn *daemonpb.Connection) aggKey {
 	clientID := ""
-	if conn.User != "" && l.known[conn.User] {
-		clientID = conn.User
+	if conn.User != "" {
+		if l.known[conn.User] {
+			clientID = conn.User
+		} else if base := renderer.BaseClientID(conn.User); base != conn.User && l.known[base] {
+			// 派生用户（多出口订阅节点）的流量归因到基础客户端。
+			clientID = base
+		}
 	}
 	return aggKey{clientID: clientID, inbound: conn.Inbound}
 }
