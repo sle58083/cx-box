@@ -29,7 +29,7 @@ func extractSingBox(archivePath, dest string) error {
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return fmt.Errorf("压缩包内未找到 sing-box 二进制")
+			return fmt.Errorf("压缩包内未找到内核二进制")
 		}
 		if err != nil {
 			return err
