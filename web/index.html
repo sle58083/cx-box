@@ -116,7 +116,7 @@ tr:last-child td{border-bottom:none}
       <div class="toolbar">
         <button class="primary" id="applyBtn">应用配置并重启 sing-box</button>
         <button id="refreshStatusBtn">刷新</button>
-        <span class="small">修改入站/出站/客户端后点「应用配置」才会写入 sing-box 并生效。</span>
+        <span class="small">入站/出站/客户端保存后会自动应用生效；此按钮用于手动重新应用。</span>
       </div>
     </section>
 
@@ -130,7 +130,7 @@ tr:last-child td{border-bottom:none}
     <!-- 出站 -->
     <section id="view-outbounds" class="hidden">
       <h2>出站</h2>
-      <div class="toolbar"><span class="sp"></span><button class="primary" id="addOutboundBtn">新建出站</button></div>
+      <div class="toolbar"><span class="sp"></span><button id="importOutboundBtn">导入链接</button><button class="primary" id="addOutboundBtn">新建出站</button></div>
       <div id="outboundTable"></div>
     </section>
 
@@ -191,9 +191,9 @@ let protocolDefaults = {};
 let statusData = null;
 let inboundCache = [], outboundCache = [], clientCache = [];
 
-function toast(msg){
+function toast(msg, ms){
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), 3200);
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove("show"), ms || 3200);
 }
 async function api(path, opts={}){
   const headers = {"Content-Type":"application/json"};
@@ -204,6 +204,8 @@ async function api(path, opts={}){
   try { payload = await res.json(); } catch(e) {}
   if (res.status === 401){ showLogin(); throw new Error("未登录"); }
   if (!res.ok) throw new Error(payload.error || ("HTTP " + res.status));
+  // 保存类接口会自动应用配置；应用失败时数据已保存但不生效，必须显著提示。
+  if (payload.apply_error) toast("⚠ " + payload.apply_error + "（修正后重新保存即可重试）", 8000);
   return payload.data;
 }
 function loginBody(){
@@ -747,7 +749,7 @@ async function inboundForm(i){ await ensureCerts();
         tls: emptyToUndef(collectSecurity("in", formState.in.tls, "inbound")),
         transport: emptyToUndef(collectTransport("in", formState.in.transport))};
       if (i.id) await api("inbounds/" + i.id, {method:"PUT", body}); else await api("inbounds", {method:"POST", body});
-      closeModal(); toast("入站已保存，记得应用配置"); loadInbounds();
+      closeModal(); toast("入站已保存并应用"); loadInbounds();
     }catch(err){ toast(err.message); }
   });
 }
@@ -798,7 +800,7 @@ async function outboundForm(o){
         tls: emptyToUndef(collectSecurity("out", formState.out.tls, "outbound")),
         transport: emptyToUndef(collectTransport("out", formState.out.transport))};
       if (o.id) await api("outbounds/" + o.id, {method:"PUT", body}); else await api("outbounds", {method:"POST", body});
-      closeModal(); toast("出站已保存，记得应用配置"); loadOutbounds();
+      closeModal(); toast("出站已保存并应用"); loadOutbounds();
     }catch(err){ toast(err.message); }
   });
 }
@@ -809,6 +811,44 @@ window.delOutbound = async (id)=>{
   try{ await api("outbounds/" + id, {method:"DELETE"}); toast("已删除"); loadOutbounds(); }catch(e){ toast(e.message); }
 };
 $("addOutboundBtn").addEventListener("click", ()=>outboundForm(null));
+
+/* ---------- 出站链接导入（落地机） ---------- */
+// 把别的机场/面板的节点分享链接批量导入为出站：逐行解析（后端
+// /tools/parse-link）后走正常新建出站接口；名称与已有入站/出站冲突时
+// 自动加后缀。导入的出站保存后自动应用，但不会自动成为默认出口——
+// 需要在 selector 出站里把它设为默认（页面导入结果里会提示）。
+async function importOutbounds(){
+  try{ outboundCache = await api("outbounds"); }catch(e){}
+  try{ inboundCache = await api("inbounds"); }catch(e){}
+  openModal(`<h3>导入节点链接为出站</h3>
+  <p class="small">粘贴一条或多条分享链接（每行一条），支持 vless / vmess / trojan / shadowsocks / hysteria2 / tuic / anytls / socks / http。导入后是普通出站，想让它成为落地出口，再到 selector 出站里设为默认。</p>
+  <label>链接</label><textarea id="impLinks" rows="7" style="width:100%" placeholder="vless://...&#10;ss://..."></textarea>
+  <div class="small" id="impResult" style="margin-top:8px"></div>
+  <div class="actions"><button type="button" onclick="closeModal()">取消</button><button type="button" class="primary" id="impGo">导入</button></div>`);
+  $("impGo").addEventListener("click", async ()=>{
+    const lines = $("impLinks").value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    if (!lines.length){ toast("先粘贴链接"); return; }
+    const used = new Set([...outboundCache, ...inboundCache].map(x=>x.name));
+    let okCount = 0; const fails = [];
+    $("impGo").disabled = true;
+    for (const line of lines){
+      try{
+        const draft = await api("tools/parse-link", {method:"POST", body:{uri: line}});
+        let name = draft.name || draft.protocol;
+        if (used.has(name)){ let i = 2; while (used.has(name + "-" + i)) i++; name = name + "-" + i; }
+        used.add(name);
+        await api("outbounds", {method:"POST", body:{name, type: draft.protocol, status:"enabled",
+          settings: draft.settings, tls: draft.tls, transport: draft.transport}});
+        okCount++;
+      }catch(e){ fails.push(e.message); }
+    }
+    $("impGo").disabled = false;
+    if (okCount) { loadOutbounds(); }
+    $("impResult").textContent = "成功导入 " + okCount + " 个" + (fails.length ? ("；失败 " + fails.length + " 个：" + fails.join("；")) : "") + (okCount ? "。要用它做落地出口，请新建或编辑 selector 出站并设为默认。" : "");
+    toast(okCount ? ("已导入 " + okCount + " 个出站") : "导入失败", 5000);
+  });
+}
+$("importOutboundBtn").addEventListener("click", importOutbounds);
 </script>
 
 <script>
@@ -948,7 +988,7 @@ function clientForm(c){
         uuid: $("clUUID").value.trim(), sub_id: $("clSubID").value.trim()};
       body["pass" + "word"] = pwVal;
       if (c.id) await api("clients/" + c.id, {method:"PUT", body}); else await api("clients", {method:"POST", body});
-      closeModal(); toast("客户端已保存，记得应用配置"); loadClients();
+      closeModal(); toast("客户端已保存并应用"); loadClients();
     }catch(err){ toast(err.message); }
   });
 }
