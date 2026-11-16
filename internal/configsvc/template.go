@@ -36,6 +36,7 @@ const (
 	ruleFieldIPCIDR   = "ip_cidr"
 	ruleFieldProtocol = "protocol"
 	ruleFieldUser     = "auth_user" // sing-box 按认证用户匹配的字段名（写成 user 会被静默忽略、永不命中，实测）
+	ruleFieldSourceIP = "source_ip_cidr"
 )
 
 // GlobalSettings 全局配置（log / dns / route.final）。MVP 无全局配置表，
@@ -138,6 +139,14 @@ func buildRoute(g GlobalSettings, rules []model.RoutingRule) map[string]any {
 			m[ruleFieldProtocol] = r.Value
 		case "user": // 中立模型类型名；渲染成 sing-box 的 auth_user 字段
 			m[ruleFieldUser] = []string{r.Value}
+		}
+
+		// 内存合成规则（IP 数限制封锁）：同时按用户组与来源 IP 匹配。
+		if len(r.AuthUsers) > 0 {
+			m[ruleFieldUser] = r.AuthUsers
+		}
+		if r.SourceIPCIDR != "" {
+			m[ruleFieldSourceIP] = []string{r.SourceIPCIDR}
 		}
 
 		if r.OutboundTag != "" {
