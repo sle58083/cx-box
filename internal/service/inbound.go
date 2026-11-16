@@ -1,6 +1,9 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -133,8 +136,40 @@ func normalizeInbound(in *model.Inbound) {
 	in.Transport = normalizeRawJSON(in.Transport)
 }
 
+// ensureSS2022StaticKey 为静态（非用户入口）ss 入站补齐 2022 服务端
+// 密钥：2022 加密的密钥必须是定长随机字节的 base64 编码，管理员留空
+// 保存时自动生成并写回 settings（表单里可见、可改）。用户入口不需要
+// 这一步——其服务端密钥由渲染器按入站推导（renderer.SS2022ServerKey），
+// 且静态入站的密钥要给管理员拿去配对端，必须是能看见的真随机密钥。
+func ensureSS2022StaticKey(in *model.Inbound) {
+	if in.Type != "shadowsocks" || in.IsUserInbound || len(in.Settings) == 0 {
+		return
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(in.Settings, &settings); err != nil || settings == nil {
+		return
+	}
+	method, _ := settings["method"].(string)
+	keyLen, is2022 := renderer.SS2022KeyLen(method)
+	if !is2022 {
+		return
+	}
+	if pw, _ := settings["password"].(string); pw != "" {
+		return
+	}
+	buf := make([]byte, keyLen)
+	if _, err := rand.Read(buf); err != nil {
+		return
+	}
+	settings["password"] = base64.StdEncoding.EncodeToString(buf)
+	if raw, err := json.Marshal(settings); err == nil {
+		in.Settings = raw
+	}
+}
+
 func (s *InboundService) Create(in *model.Inbound) error {
 	normalizeInbound(in)
+	ensureSS2022StaticKey(in)
 	s.avoidPortConflict(in)
 	if err := s.validate(in); err != nil {
 		return err
@@ -151,6 +186,7 @@ func (s *InboundService) Create(in *model.Inbound) error {
 // Update 更新入站（按 ID 全量更新可编辑字段）。
 func (s *InboundService) Update(in *model.Inbound) error {
 	normalizeInbound(in)
+	ensureSS2022StaticKey(in)
 	if _, err := s.Get(in.ID.String()); err != nil {
 		return err
 	}
