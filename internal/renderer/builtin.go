@@ -167,7 +167,7 @@ func (r *URLTestRenderer) Meta() ProtocolMeta {
 		Directions: []Direction{DirectionOutbound},
 		Outbound: []FieldSchema{
 			{Key: "outbounds", Label: "出站列表", Type: "array", Required: true},
-			{Key: "url", Label: "探测 URL", Type: "text", Required: true},
+			{Key: "url", Label: "测速地址（URL）", Type: "text", Required: true},
 			{Key: "interval", Label: "探测间隔", Type: "duration", Required: false},
 		},
 	}
