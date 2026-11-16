@@ -167,7 +167,7 @@ func (r *Hysteria2Renderer) Meta() ProtocolMeta {
 			{Key: "password", Label: "密码", Type: "text", Required: true, Encrypt: true},
 			{Key: "up_mbps", Label: "上行带宽 Mbps", Type: "number", Required: false},
 			{Key: "down_mbps", Label: "下行带宽 Mbps", Type: "number", Required: false},
-			{Key: "masquerade", Label: "Masquerade", Type: "text", Required: false},
+			{Key: "masquerade", Label: "伪装站点", Type: "text", Required: false},
 		},
 		Outbound: []FieldSchema{
 			{Key: "server", Label: "服务器地址", Type: "text", Required: true},
