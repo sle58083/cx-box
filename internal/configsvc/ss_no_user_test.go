@@ -1,6 +1,7 @@
 package configsvc
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -58,5 +59,38 @@ func TestGenerateSkipsCredentialLessSSInbound(t *testing.T) {
 		Inbounds: []model.Inbound{mkInbound(`{"method":"aes-128-gcm","password":"staticpw"}`)},
 	}); n != 1 {
 		t.Fatalf("有静态密码时 ss 入站应生成, got %d inbounds", n)
+	}
+}
+
+// TestGenerateSS2022NoUserNotSkipped 2022 入站无客户端时不再跳过：服务端
+// 密钥由渲染器自动推导补齐，PSK-only 配置合法（旧行为会 missing psk）。
+func TestGenerateSS2022NoUserNotSkipped(t *testing.T) {
+	in := model.Inbound{
+		Base:          model.Base{ID: model.NewID()},
+		Type:          "shadowsocks",
+		Name:          "ss-in",
+		Port:          8388,
+		Settings:      json.RawMessage(`{"method":"2022-blake3-aes-128-gcm"}`),
+		IsUserInbound: true,
+		Status:        model.StatusEnabled,
+	}
+	doc, err := NewGenerator().Generate(&NodeConfigContext{
+		Global:   DefaultGlobalSettings(),
+		Inbounds: []model.Inbound{in},
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	list, _ := doc["inbounds"].([]map[string]any)
+	if len(list) != 1 {
+		t.Fatalf("2022 无客户端入站应生成, got %d inbounds", len(list))
+	}
+	pw, _ := list[0]["password"].(string)
+	if pw == "" {
+		t.Fatal("2022 入站应带自动推导的服务端密钥")
+	}
+	raw, err := base64.StdEncoding.DecodeString(pw)
+	if err != nil || len(raw) != 16 {
+		t.Fatalf("服务端密钥应是 16 字节 base64, got %q (err=%v)", pw, err)
 	}
 }
