@@ -63,6 +63,7 @@ func (s *Server) registerPanelRoutes(r *gin.Engine, panelPath string) {
 	auth.GET("/clients/:id/links", s.clientLinks)
 	auth.PUT("/clients/:id", s.updateClient)
 	auth.DELETE("/clients/:id", s.deleteClient)
+	auth.POST("/clients/:id/reset-traffic", s.resetClientTraffic)
 
 	auth.GET("/certificates", s.listCertificates)
 	auth.POST("/certificates", s.createCertificate)
@@ -395,9 +396,10 @@ func (s *Server) deleteOutbound(c *gin.Context) {
 // 但管理端需要看到 UUID/密码/订阅 ID 才能运维；本接口在鉴权之后）。
 type clientView struct {
 	model.Client
-	UUID       string   `json:"uuid"`
-	Password   string   `json:"password"`
-	InboundIDs []string `json:"inbound_ids"` // 多选入站（空 = 全部用户入口）
+	UUID        string   `json:"uuid"`
+	Password    string   `json:"password"`
+	InboundIDs  []string `json:"inbound_ids"`  // 多选入站（空 = 全部用户入口）
+	OutboundIDs []string `json:"outbound_ids"` // 多选出口（空 = 跟随全局默认；多选自动测速组）
 }
 
 // password 返回请求里携带的客户端密码（单独成方法，避免与模型字段同名混淆）。
@@ -409,7 +411,8 @@ func viewClient(cl *model.Client) clientView {
 	if ids == nil {
 		ids = []string{}
 	}
-	return clientView{Client: *cl, UUID: cl.UUID, Password: pw, InboundIDs: ids}
+	return clientView{Client: *cl, UUID: cl.UUID, Password: pw, InboundIDs: ids,
+		OutboundIDs: cl.SelectedOutboundIDs()}
 }
 
 // applyInboundSelection 把请求里的入站选择落到模型：inbound_ids 出现时（含空
@@ -424,6 +427,21 @@ func applyInboundSelection(cl *model.Client, req *clientView) {
 		cl.InboundID = &first
 	} else {
 		cl.InboundID = nil
+	}
+}
+
+// applyOutboundSelection 把请求里的出口选择落到模型：outbound_ids 出现时
+// （含空数组 = 跟随全局默认）以它为准并同步旧的单选字段；未出现时保留
+// 请求体里的单选 outbound_id 语义。
+func applyOutboundSelection(cl *model.Client, req *clientView) {
+	if req.OutboundIDs == nil {
+		return
+	}
+	cl.SetOutboundIDs(req.OutboundIDs)
+	if len(req.OutboundIDs) > 0 {
+		cl.OutboundID = req.OutboundIDs[0]
+	} else {
+		cl.OutboundID = ""
 	}
 }
 
@@ -450,6 +468,7 @@ func (s *Server) createClient(c *gin.Context) {
 	cl.UUID = req.UUID
 	cl.Password = req.password()
 	applyInboundSelection(&cl, &req)
+	applyOutboundSelection(&cl, &req)
 	cl.ID = model.NewID()
 	if err := s.client.Create(&cl); err != nil {
 		fail(c, http.StatusBadRequest, err)
@@ -486,6 +505,10 @@ func (s *Server) updateClient(c *gin.Context) {
 	applyInboundSelection(&cl, &req)
 	if req.InboundIDs == nil {
 		cl.InboundIDs = existing.InboundIDs // 未携带多选字段的更新不清空已有多选
+	}
+	applyOutboundSelection(&cl, &req)
+	if req.OutboundIDs == nil {
+		cl.OutboundIDs = existing.OutboundIDs // 未携带多选字段的更新不清空已有多选
 	}
 	if err := s.client.Update(&cl); err != nil {
 		fail(c, http.StatusBadRequest, err)
@@ -553,6 +576,22 @@ func parseLinkMeta(uri string) (string, string) {
 		}
 	}
 	return typ, typ
+}
+
+// resetClientTraffic 把客户端已用流量清零并重新应用：超额被生成器
+// 排除的客户端会随本次应用恢复可用。
+func (s *Server) resetClientTraffic(c *gin.Context) {
+	cl, err := s.client.Get(c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusNotFound, err)
+		return
+	}
+	cl.UsedBytes = 0
+	if err := s.client.Update(cl); err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	s.okApplied(c, cl)
 }
 
 func (s *Server) deleteClient(c *gin.Context) {
