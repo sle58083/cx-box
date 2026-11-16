@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/sle58083/cx-box/internal/model"
 	"github.com/sle58083/cx-box/internal/renderer"
@@ -22,6 +24,26 @@ func ssInboundHasPassword(cfg model.Inbound) bool {
 		return false
 	}
 	return s.P != ""
+}
+
+// ssInboundHasCredential 判断 ss 用户入口在无客户端时是否仍有可用凭据：
+// 设了静态密码，或是 2022 加密（服务端密钥由渲染器自动推导补齐，
+// PSK-only 配置合法）。都没有才需要跳过生成（见 Generate 里的说明）。
+func ssInboundHasCredential(cfg model.Inbound) bool {
+	if ssInboundHasPassword(cfg) {
+		return true
+	}
+	if len(cfg.Settings) == 0 {
+		return false
+	}
+	var s struct {
+		M string `json:"method"`
+	}
+	if err := json.Unmarshal(cfg.Settings, &s); err != nil {
+		return false
+	}
+	_, is2022 := renderer.SS2022KeyLen(s.M)
+	return is2022
 }
 
 // ErrUnknownProtocol 表示未注册的协议类型。
@@ -42,6 +64,9 @@ type NodeConfigContext struct {
 	Rules      []model.RoutingRule
 	ProxyUsers []renderer.ProxyUser // 该分组 active 用户（UUID 已解密）
 	APISecret  string               // 非空时注入 sing-box api service（流量统计）
+	// IPBlocks 是 IP 数限制的当前封锁集合（客户端 ID → 被拒来源 IP），
+	// 由流量采集器检测超限后经 Service 注入；生成器据此合成封锁规则。
+	IPBlocks map[string][]string
 }
 
 // Generator 是中立模型 → sing-box JSON 的纯函数生成器。
@@ -78,7 +103,7 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 		// sing-box 会以 missing password 拒绝整份配置（连累其他入站一起
 		// 起不来，实测其余协议空 users 均可启动）。这种入站此时无人可连，
 		// 跳过生成；建好客户端后下一次（自动）应用会自动带上它。
-		if cfg.Type == "shadowsocks" && cfg.IsUserInbound && len(users) == 0 && !ssInboundHasPassword(cfg) {
+		if cfg.Type == "shadowsocks" && cfg.IsUserInbound && len(users) == 0 && !ssInboundHasCredential(cfg) {
 			continue
 		}
 		el, err := r.RenderInbound(&renderer.RenderContext{Ctx: context.Background(), Users: users}, cfg, users)
@@ -121,6 +146,22 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 	userRules, groupOutbounds := clientOutboundRouting(ctx.ProxyUsers, enabledOutbounds)
 	outbounds = append(outbounds, groupOutbounds...)
 
+	// 2.6 IP 数限制封锁规则：超限来源 IP 的连接直接 block（须优先于
+	// 出口规则命中）。规则引用 tag=block 的出站，缺失时兜底生成。
+	blockRules := ipBlockRules(ctx.ProxyUsers, ctx.IPBlocks)
+	if len(blockRules) > 0 {
+		hasBlock := false
+		for _, el := range outbounds {
+			if el[kTag] == "block" {
+				hasBlock = true
+				break
+			}
+		}
+		if !hasBlock {
+			outbounds = append(outbounds, map[string]any{kType: "block", kTag: "block"})
+		}
+	}
+
 	// 3. tag 全局唯一断言（§9.8，跨 inbound/outbound 全量）。
 	if err := assertUniqueTags(inbounds, outbounds); err != nil {
 		return nil, err
@@ -147,7 +188,10 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 	global.RouteFinal = resolveRouteFinal(outbounds)
 	// 客户端级出口：为指定了出口的客户端合成按 user 匹配的路由规则，
 	// 放在通用路由规则之前（优先命中），未指定的走 route.final 全局默认。
-	rules := append(userRules, ctx.Rules...)
+	rules := make([]model.RoutingRule, 0, len(blockRules)+len(userRules)+len(ctx.Rules))
+	rules = append(rules, blockRules...)
+	rules = append(rules, userRules...)
+	rules = append(rules, ctx.Rules...)
 	applyGlobalTemplate(doc, global, rules)
 	return doc, nil
 }
@@ -256,20 +300,28 @@ func assertUniqueTags(inbounds, outbounds []map[string]any) error {
 	return nil
 }
 
-// resolveRouteFinal 推导 route.final：优先 selector，其次第一个出站，兜底 direct。
+// resolveRouteFinal 推导 route.final：优先 selector，其次第一个非 direct
+// 出站，兜底 direct。block 出站是执法专用的，绝不能成为默认出口——旧实现
+// 在 [direct, block] 顺序下会把 fallback 覆写成 block，导致全部流量被拒
+// （v0.5.14 IP 限制 e2e 实测抓到）。
 func resolveRouteFinal(outbounds []map[string]any) string {
-	fallback := "direct"
+	first := ""
 	for _, el := range outbounds {
 		tag, _ := el[kTag].(string)
-		if tag != "" && fallback == "direct" {
-			fallback = tag
+		if tag == "" || tag == "block" {
+			continue
 		}
-		typ, _ := el["type"].(string)
-		if typ == "selector" {
+		if typ, _ := el["type"].(string); typ == "selector" {
 			return tag
 		}
+		if tag != "direct" && first == "" {
+			first = tag
+		}
 	}
-	return fallback
+	if first != "" {
+		return first
+	}
+	return "direct"
 }
 
 // filterInbounds 过滤 status=disabled。
@@ -292,4 +344,55 @@ func filterOutbounds(in []model.Outbound) []model.Outbound {
 		}
 	}
 	return out
+}
+
+// ipBlockRules 把 IP 数限制的封锁集合翻译成路由规则：某客户端被封的
+// 来源 IP 命中「该客户端全部用户（含派生用户）+ 来源 IP」时走 block
+// 出站。封锁集合由流量采集器按活跃连接的来源 IP 检测超限后注入。
+// 客户端已不在活跃用户里（被删/禁用/超额）时其规则自动消失。
+func ipBlockRules(users []renderer.ProxyUser, blocks map[string][]string) []model.RoutingRule {
+	if len(blocks) == 0 {
+		return nil
+	}
+	namesByClient := make(map[string][]string)
+	seenName := make(map[string]map[string]bool)
+	for _, u := range users {
+		if u.ID == "" || u.Name == "" {
+			continue
+		}
+		if seenName[u.ID] == nil {
+			seenName[u.ID] = make(map[string]bool)
+		}
+		if !seenName[u.ID][u.Name] {
+			seenName[u.ID][u.Name] = true
+			namesByClient[u.ID] = append(namesByClient[u.ID], u.Name)
+		}
+	}
+	clientIDs := make([]string, 0, len(blocks))
+	for clientID := range blocks {
+		clientIDs = append(clientIDs, clientID)
+	}
+	sort.Strings(clientIDs)
+	var rules []model.RoutingRule
+	for _, clientID := range clientIDs {
+		names := namesByClient[clientID]
+		if len(names) == 0 {
+			continue
+		}
+		ips := append([]string(nil), blocks[clientID]...)
+		sort.Strings(ips)
+		for _, ip := range ips {
+			cidr := ip + "/32"
+			if strings.Contains(ip, ":") {
+				cidr = ip + "/128"
+			}
+			rules = append(rules, model.RoutingRule{
+				Name:         "ip-limit",
+				OutboundTag:  "block",
+				AuthUsers:    names,
+				SourceIPCIDR: cidr,
+			})
+		}
+	}
+	return rules
 }
