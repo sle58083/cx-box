@@ -63,16 +63,23 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 	// 客户端已选出口解析为 (ID, 显示名)：订阅为每个出口额外生成一条
 	// 派生链接（节点名带出口名），用户在客户端里点哪个节点走哪个出口。
 	// 已删除的出站跳过；direct 显示为「直连」。
+	// 两个例外：① 只选了一个出口时基础链接本身就直达它，派生链接纯属
+	// 重复，不生成（尤其只选直连时，订阅里不再平白多出「· 直连」）；
+	// ② 客户端开了 SubNoDirect 时，多选里也不生成直连派生节点。
+	selIDs := client.SelectedOutboundIDs()
+	singleSelection := len(selIDs) == 1
 	type obRef struct{ id, name string }
 	var obRefs []obRef
 	seenOb := map[string]bool{}
-	for _, obID := range client.SelectedOutboundIDs() {
+	for _, obID := range selIDs {
 		if seenOb[obID] {
 			continue
 		}
 		seenOb[obID] = true
 		if obID == "direct" {
-			obRefs = append(obRefs, obRef{obID, "直连"})
+			if !client.SubNoDirect {
+				obRefs = append(obRefs, obRef{obID, "直连"})
+			}
 			continue
 		}
 		var o model.Outbound
@@ -114,6 +121,10 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 		links = append(links, uri)
 		// 派生链接：与基础链接同入站，凭据换成派生凭据（入站侧有对应
 		// 派生用户，路由直达该出口），节点名后缀出口名以便客户端里选。
+		// 只选了一个出口时基础链接已直达它，不再生成重复的派生链接。
+		if singleSelection {
+			continue
+		}
 		for _, obr := range obRefs {
 			dob := ob
 			dob.Name = in.Name + " · " + obr.name
@@ -167,6 +178,8 @@ func inboundAsOutbound(in model.Inbound, host string) (model.Outbound, error) {
 		return model.Outbound{}, err
 	}
 	return model.Outbound{
+		// 带上入站 ID：ss 2022 的订阅密码要按入站推导服务端密钥。
+		Base:      model.Base{ID: in.ID},
 		Name:      in.Name,
 		Type:      in.Type,
 		Settings:  raw,
