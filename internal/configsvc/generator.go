@@ -116,6 +116,11 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 		outbounds = append(outbounds, map[string]any{kType: "direct", kTag: "direct"})
 	}
 
+	// 2.5 客户端级出口：把每个客户端的出口选择翻译成路由规则；多选时
+	// 额外合成一个 urltest 测速组出站（组员为所选出口，规则指向组）。
+	userRules, groupOutbounds := clientOutboundRouting(ctx.ProxyUsers, enabledOutbounds)
+	outbounds = append(outbounds, groupOutbounds...)
+
 	// 3. tag 全局唯一断言（§9.8，跨 inbound/outbound 全量）。
 	if err := assertUniqueTags(inbounds, outbounds); err != nil {
 		return nil, err
@@ -142,43 +147,67 @@ func (g *Generator) Generate(ctx *NodeConfigContext) (map[string]any, error) {
 	global.RouteFinal = resolveRouteFinal(outbounds)
 	// 客户端级出口：为指定了出口的客户端合成按 user 匹配的路由规则，
 	// 放在通用路由规则之前（优先命中），未指定的走 route.final 全局默认。
-	rules := clientOutboundRules(ctx.ProxyUsers, enabledOutbounds)
-	rules = append(rules, ctx.Rules...)
+	rules := append(userRules, ctx.Rules...)
 	applyGlobalTemplate(doc, global, rules)
 	return doc, nil
 }
 
-// clientOutboundRules 把客户端的出口选择翻译成路由规则：sing-box 按
-// 连接的认证 user（即入站 users[].name = 客户端 ID）匹配。OutboundID 为
-// 空的不生成规则（走全局默认）；"direct" 直连；其余按出站 ID 解析成
-// tag（出站名称）。出站已被删除/禁用时跳过该规则，客户端回落全局默认，
-// 不让一个失效引用拖垮整份配置。
-func clientOutboundRules(users []renderer.ProxyUser, outbounds []model.Outbound) []model.RoutingRule {
+// clientOutboundRouting 把客户端的出口选择翻译成路由规则：sing-box 按
+// 连接的认证 user（即入站 users[].name = 客户端 ID）匹配。单选时规则
+// 直达该出口；多选时合成一个 urltest 测速组（自动选延迟最低的成员），
+// 规则指向组。所选出站被删除/禁用时自动忽略；全部无效则不生成规则，
+// 该客户端回落全局默认。字段是 auth_user 而非 user（见 template.go）。
+func clientOutboundRouting(users []renderer.ProxyUser, outbounds []model.Outbound) ([]model.RoutingRule, []map[string]any) {
 	tagByID := make(map[string]string, len(outbounds))
 	for _, o := range outbounds {
 		tagByID[o.ID.String()] = o.Name
 	}
 	var rules []model.RoutingRule
+	var groups []map[string]any
 	for _, u := range users {
-		if u.OutboundID == "" {
+		sel := u.OutboundIDs
+		if len(sel) == 0 && u.OutboundID != "" {
+			sel = []string{u.OutboundID}
+		}
+		var tags []string
+		seen := make(map[string]bool, len(sel))
+		for _, id := range sel {
+			tag := ""
+			if id == "direct" {
+				tag = "direct"
+			} else if t, ok := tagByID[id]; ok {
+				tag = t
+			}
+			if tag != "" && !seen[tag] {
+				seen[tag] = true
+				tags = append(tags, tag)
+			}
+		}
+		if len(tags) == 0 {
 			continue
 		}
-		tag := u.OutboundID
-		if tag != "direct" {
-			t, ok := tagByID[tag]
-			if !ok {
-				continue
+		target := tags[0]
+		if len(tags) > 1 {
+			target = "cx-grp-" + u.Name
+			members := make([]any, 0, len(tags))
+			for _, t := range tags {
+				members = append(members, t)
 			}
-			tag = t
+			groups = append(groups, map[string]any{
+				kType: "urltest", kTag: target,
+				"outbounds": members,
+				"url":       "https://www.gstatic.com/generate_204",
+				"interval":  "3m",
+			})
 		}
 		rules = append(rules, model.RoutingRule{
 			RuleType:    "user",
 			Value:       u.Name,
-			OutboundTag: tag,
+			OutboundTag: target,
 			Enabled:     true,
 		})
 	}
-	return rules
+	return rules, groups
 }
 
 // usersForInbound 过滤出可注入某个入站的客户端：未做入站选择的（InboundIDs
