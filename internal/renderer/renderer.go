@@ -29,6 +29,10 @@ type ProxyUser struct {
 	// OutboundID 是该客户端指定的出口（空 = 跟随全局默认；"direct" = 直连；
 	// 否则为出站 ID）。生成器据此合成按 user 匹配的路由规则。
 	OutboundID string
+	// OutboundIDs 是该客户端选中的出口列表（多选优先于 OutboundID 的
+	// 统一视图）：空 = 跟随全局默认；每项为 "direct" 或出站 ID；
+	// 多于一项时生成器合成 urltest 测速组并把规则指向它。
+	OutboundIDs []string
 }
 
 // RenderContext 提供渲染期间共享数据与已解密的敏感值。
