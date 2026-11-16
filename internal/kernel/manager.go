@@ -109,19 +109,19 @@ func (m *Manager) EnsureBinary(downloadURL string) error {
 		return fmt.Errorf("kernel: 创建 bin 目录失败: %w", err)
 	}
 	if downloadURL == "" {
-		return fmt.Errorf("kernel: sing-box 二进制缺失且未提供下载地址: %s", p)
+		return fmt.Errorf("kernel: 内核二进制缺失且未提供下载地址: %s", p)
 	}
 	if strings.HasSuffix(downloadURL, ".tar.gz") {
 		tmp := p + ".tar.gz"
 		if err := downloadFile(downloadURL, tmp); err != nil {
-			return fmt.Errorf("kernel: 下载 sing-box 失败: %w", err)
+			return fmt.Errorf("kernel: 下载内核失败: %w", err)
 		}
 		defer os.Remove(tmp)
 		if err := extractSingBox(tmp, p); err != nil {
-			return fmt.Errorf("kernel: 解包 sing-box 失败: %w", err)
+			return fmt.Errorf("kernel: 解包内核失败: %w", err)
 		}
 	} else if err := downloadFile(downloadURL, p); err != nil {
-		return fmt.Errorf("kernel: 下载 sing-box 失败: %w", err)
+		return fmt.Errorf("kernel: 下载内核失败: %w", err)
 	}
 	if err := os.Chmod(p, 0o755); err != nil {
 		return fmt.Errorf("kernel: 设置可执行权限失败: %w", err)
@@ -134,7 +134,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cmd != nil && m.cmd.Process != nil {
-		return fmt.Errorf("kernel: sing-box 已在运行 (pid %d)", m.cmd.Process.Pid)
+		return fmt.Errorf("kernel: 内核已在运行 (pid %d)", m.cmd.Process.Pid)
 	}
 	// 内核是守护进程，生命周期由 Stop 管理，不能绑定调用方 ctx：
 	// 否则经 HTTP apply 触发的重启会在请求结束（ctx 取消）时被连带杀掉。
@@ -142,7 +142,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("kernel: 启动 sing-box 失败: %w", err)
+		return fmt.Errorf("kernel: 启动内核失败: %w", err)
 	}
 	m.cmd = cmd
 	// 进程退出后清掉句柄，Running() 才不会误报。
@@ -165,7 +165,7 @@ func (m *Manager) Stop() error {
 		return nil
 	}
 	if err := m.cmd.Process.Kill(); err != nil {
-		return fmt.Errorf("kernel: 停止 sing-box 失败: %w", err)
+		return fmt.Errorf("kernel: 停止内核失败: %w", err)
 	}
 	m.cmd = nil
 	return nil
