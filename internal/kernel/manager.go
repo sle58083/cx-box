@@ -179,9 +179,16 @@ func (m *Manager) Restart(ctx context.Context) error {
 	return m.Start(ctx)
 }
 
-// Check 校验配置（sing-box check -c）。
+// Check 校验当前配置文件（sing-box check -c）。
 func (m *Manager) Check() error {
-	cmd := exec.Command(m.BinaryPath(), "check", "-c", m.ConfigPath())
+	return m.CheckFile(m.ConfigPath())
+}
+
+// CheckFile 校验指定路径的配置。Apply 先把新配置写到临时文件校验，
+// 通过后才替换正式文件——校验失败时磁盘上保留的是上一份好配置，
+// 服务重启也不会因为坏文件起不来内核。
+func (m *Manager) CheckFile(path string) error {
+	cmd := exec.Command(m.BinaryPath(), "check", "-c", path)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("kernel: 配置校验失败: %v\n%s", err, string(out))
