@@ -26,6 +26,9 @@ type ProxyUser struct {
 	// InboundIDs 是该客户端选中的入站 ID 列表（空 = 适用全部用户入口入站）；
 	// 生成器据此把用户只注入被选中的入站，订阅视图不使用该字段。
 	InboundIDs []string
+	// OutboundID 是该客户端指定的出口（空 = 跟随全局默认；"direct" = 直连；
+	// 否则为出站 ID）。生成器据此合成按 user 匹配的路由规则。
+	OutboundID string
 }
 
 // RenderContext 提供渲染期间共享数据与已解密的敏感值。
