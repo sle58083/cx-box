@@ -275,6 +275,7 @@ func (s *Service) activeUsers(ctx context.Context) ([]renderer.ProxyUser, error)
 			Name:       c.ID.String(),
 			UUID:       c.UUID,
 			InboundIDs: c.SelectedInboundIDs(),
+			OutboundID: c.OutboundID,
 			Password:   c.Password,
 		})
 	}
