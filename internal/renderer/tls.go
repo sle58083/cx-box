@@ -98,6 +98,13 @@ func renderTLS(raw json.RawMessage) (any, error) {
 		// 空对象 {} 等同于未配置，不输出 tls 字段（否则 sing-box 会拒绝空 tls）。
 		return nil, nil
 	}
+	if realityEnabled(m) {
+		// Reality 不使用证书文件：TLS 里同时出现 certificate_path/key_path
+		// 时 sing-box 直接 FATAL（certificate is unavailable in reality），
+		// 整份配置无法启动。入站绑了证书又开 Reality 时在此剥离兜底。
+		delete(m, "certificate_path")
+		delete(m, "key_path")
+	}
 	return m, nil
 }
 
