@@ -20,6 +20,7 @@ type Client struct {
 	InboundID     *string `gorm:"type:text;index" json:"inbound_id"`      // 绑定的入站（可空=全部用户入口入站）
 	InboundIDs    string  `gorm:"type:text" json:"-"`                     // 多选入站 ID 列表（JSON []string）；非空时优先于 InboundID
 	OutboundID    string  `gorm:"type:varchar(64)" json:"outbound_id"`    // 指定出口：空=跟随全局默认；"direct"=直连；否则为出站 ID
+	OutboundIDs   string  `gorm:"type:text" json:"-"`                     // 多选出口 ID 列表（JSON []string）；非空时优先于 OutboundID
 	ResetStrategy string  `gorm:"type:varchar(32)" json:"reset_strategy"` // 流量重置策略（s-ui 兼容字段）
 }
 
@@ -50,6 +51,35 @@ func (c *Client) SetInboundIDs(ids []string) {
 		return
 	}
 	c.InboundIDs = string(raw)
+}
+
+// SelectedOutboundIDs 返回客户端选中的出口 ID 列表：多选（OutboundIDs）
+// 优先，其次旧的单选 OutboundID；都没选返回 nil（跟随全局默认）。
+// 每项为 "direct"（直连）或出站 ID；多于一项时生成器合成测速组。
+func (c *Client) SelectedOutboundIDs() []string {
+	if c.OutboundIDs != "" {
+		var ids []string
+		if err := json.Unmarshal([]byte(c.OutboundIDs), &ids); err == nil && len(ids) > 0 {
+			return ids
+		}
+	}
+	if c.OutboundID != "" {
+		return []string{c.OutboundID}
+	}
+	return nil
+}
+
+// SetOutboundIDs 写入多选出口列表（空列表表示清除多选）。
+func (c *Client) SetOutboundIDs(ids []string) {
+	if len(ids) == 0 {
+		c.OutboundIDs = ""
+		return
+	}
+	raw, err := json.Marshal(ids)
+	if err != nil {
+		return
+	}
+	c.OutboundIDs = string(raw)
 }
 
 // TableName 返回表名。
