@@ -357,8 +357,6 @@ install_cx-box() {
     echo -e "You may access the Panel with following URL(s):${green}"
     ${BIN} uri
     echo -e "${plain}"
-    echo -e ""
-    cx-box help
 }
 
 purge_cx-box() {
