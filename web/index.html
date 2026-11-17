@@ -415,6 +415,8 @@ async function loadStatus(){
     const upt = sv.uptime_seconds ? (Math.floor(sv.uptime_seconds/86400) + " 天 " + Math.floor(sv.uptime_seconds%86400/3600) + " 小时") : "-";
     const meter = (label, pct, val)=>`<div class="srv-row"><div class="r1"><span>${label}</span><span class="rv">${val}</span></div><div class="meter"><i style="width:${Math.min(100, Math.max(0, pct||0))}%"></i></div></div>`;
     $("serverCards").innerHTML =
+      `<div class="srv-kv" style="border-top:none;padding-top:0"><span>公网 IP</span><span class="rv">${sv.public_ip ? esc(sv.public_ip) : "检测中…"}</span></div>` +
+      `<div class="srv-kv"><span>本机网卡</span><span class="rv">${sv.local_ip ? esc(sv.local_ip) : "-"}</span></div>` +
       meter("CPU 使用率", sv.cpu_percent, (sv.cpu_percent ?? 0) + " %") +
       meter("内存", sv.mem_percent, fmtSize(sv.mem_used) + " / " + fmtSize(sv.mem_total) + "（" + (sv.mem_percent ?? 0) + "%）") +
       meter("磁盘", sv.disk_percent, fmtSize(sv.disk_used) + " / " + fmtSize(sv.disk_total) + "（" + (sv.disk_percent ?? 0) + "%）") +
