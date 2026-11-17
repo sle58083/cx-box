@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"github.com/sle58083/cx-box/internal/firewall"
 	"github.com/sle58083/cx-box/internal/service"
 )
 
@@ -149,4 +151,54 @@ func cmdToken(args []string) {
 func cmdMigrate() {
 	openDB()
 	fmt.Println("数据库迁移完成")
+}
+
+// cmdFirewall 一键开启/关闭系统防火墙（菜单 21/22 项调用本命令）。
+// 用法：
+//
+//	cx-box firewall -on      开启并放行面板/订阅/SSH/全部入站端口
+//	cx-box firewall -off     关闭并删除 cx-box 的放行规则
+//	cx-box firewall -status  查看状态（默认）
+//	cx-box firewall -sync    把放行同步到当前入站集合（面板自动调用）
+func cmdFirewall(args []string) {
+	fs := flag.NewFlagSet("firewall", flag.ExitOnError)
+	on := fs.Bool("on", false, "开启防火墙")
+	off := fs.Bool("off", false, "关闭防火墙")
+	status := fs.Bool("status", false, "查看防火墙状态")
+	syncPorts := fs.Bool("sync", false, "同步放行端口")
+	_ = fs.Parse(args)
+
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "错误: 无法定位可执行文件路径: %v\n", err)
+		os.Exit(1)
+	}
+	mgr := firewall.NewManager(filepath.Dir(exe))
+	g := openDB()
+
+	switch {
+	case *on:
+		st, err := mgr.Enable(g)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "开启防火墙失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("防火墙已开启（后端 %s），已放行 %d 条端口规则\n", st.Backend, len(st.Ports))
+		fmt.Println(mgr.Status(g))
+	case *off:
+		if err := mgr.Disable(); err != nil {
+			fmt.Fprintf(os.Stderr, "关闭防火墙失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("防火墙已关闭，cx-box 的放行规则已删除")
+	case *syncPorts:
+		if err := mgr.Sync(g); err != nil {
+			fmt.Fprintf(os.Stderr, "同步放行端口失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("放行端口已同步")
+	default:
+		_ = status
+		fmt.Println(mgr.Status(g))
+	}
 }
