@@ -7,8 +7,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
+	"github.com/sle58083/cx-box/internal/acme"
 	"github.com/sle58083/cx-box/internal/configsvc"
+	"github.com/sle58083/cx-box/internal/firewall"
 	"github.com/sle58083/cx-box/internal/kernel"
 	"github.com/sle58083/cx-box/internal/model"
 	"github.com/sle58083/cx-box/internal/server"
@@ -39,6 +42,14 @@ func runServer() {
 		log.Printf("警告: sing-box 内核未就绪: %v（面板照常启动）", err)
 	} else {
 		cfg = configsvc.NewService(g, km)
+		// 防火墙托管开启时，每次应用配置后同步放行端口（新建协议的
+		// 端口自动打开、删掉的自动收回）；未开启时 Sync 是空操作。
+		fwMgr := firewall.NewManager(filepath.Dir(exe))
+		cfg.AfterApply = func(actx context.Context) {
+			if err := fwMgr.Sync(g); err != nil {
+				log.Printf("警告: 防火墙端口同步失败: %v", err)
+			}
+		}
 		if err := cfg.Apply(ctx); err != nil {
 			log.Printf("警告: 应用 sing-box 配置失败: %v（面板照常启动）", err)
 		} else {
@@ -93,6 +104,33 @@ func runServer() {
 			go collector.Run(ctx)
 		}
 	}
+
+	// ACME 自动证书续签：启动 1 分钟后先查一次，之后每天查一次；
+	// 30 天内到期或上次失败的自动重签，成功后重新应用配置。
+	acmeMgr := acme.NewManager(g)
+	if cfg != nil {
+		acmeMgr.OnIssued = func(ctx context.Context) { _ = cfg.Apply(ctx) }
+	}
+	go func() {
+		timer := time.NewTimer(time.Minute)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			acmeMgr.RenewDue(ctx)
+		}
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				acmeMgr.RenewDue(ctx)
+			}
+		}
+	}()
 
 	srv := server.New(g, km, cfg)
 	errCh := make(chan error, 1)
