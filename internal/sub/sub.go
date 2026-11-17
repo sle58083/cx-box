@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -34,6 +35,35 @@ func New(db *gorm.DB) *Generator {
 	return &Generator{db: db, clients: service.NewClientService(db)}
 }
 
+// SanitizeNodeHost 把用户填写的节点地址清洗成裸主机名/IP：去掉协议头、
+// 路径与端口部分（节点链接的端口来自入站配置，不能跟在地址里）。
+func SanitizeNodeHost(raw string) string {
+	h := strings.TrimSpace(raw)
+	if h == "" {
+		return ""
+	}
+	if i := strings.Index(h, "://"); i >= 0 {
+		h = h[i+3:]
+	}
+	if i := strings.IndexByte(h, '/'); i >= 0 {
+		h = h[:i]
+	}
+	if hh, _, err := net.SplitHostPort(h); err == nil {
+		h = hh
+	}
+	return strings.TrimSpace(h)
+}
+
+// nodeHostOverride 读取设置里的订阅节点地址覆盖（清洗后）；
+// 未设置或读取失败时返回空串，表示跟随请求主机名。
+func (g *Generator) nodeHostOverride() string {
+	var st model.Setting
+	if err := g.db.First(&st).Error; err != nil {
+		return ""
+	}
+	return SanitizeNodeHost(st.SubNodeHost)
+}
+
 // Links 返回某订阅 ID 对应客户端的分享链接列表。
 // host 是订阅被访问时的主机名（不含端口），用作链接里的服务器地址。
 // 客户端不存在返回 gorm.ErrRecordNotFound；被禁用/到期/超流量返回业务错误。
@@ -47,6 +77,13 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 	}
 	if client.ExpiryTime > 0 && client.ExpiryTime < time.Now().Unix() {
 		return nil, client, fmt.Errorf("sub: 客户端已到期")
+	}
+
+	// 订阅节点地址覆盖：设置里填了固定地址时，链接里的节点服务器地址
+	// 永远用它，不跟随本次拉订阅请求的主机名。这样订阅本身可以走
+	// Cloudflare 中转域名拉取，节点仍连直连域名/IP。
+	if override := g.nodeHostOverride(); override != "" {
+		host = override
 	}
 
 	inbounds, err := g.targetInbounds(client)
