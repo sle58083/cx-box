@@ -39,6 +39,8 @@ func main() {
 		cmdAdmin(args)
 	case "token":
 		cmdToken(args)
+	case "firewall":
+		cmdFirewall(args)
 	case "migrate":
 		cmdMigrate()
 	case "help", "-h", "--help":
@@ -78,6 +80,7 @@ func printHelp() {
   cx-box setting       查看/修改面板设置
   cx-box admin         查看/修改管理员账号
   cx-box token         生成 API 令牌
+  cx-box firewall      防火墙管理（-on 开启 / -off 关闭 / -status 状态）
   cx-box migrate       执行数据库迁移
   cx-box help          显示帮助`)
 }
