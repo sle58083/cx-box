@@ -4,18 +4,19 @@ package model
 import "time"
 
 // Certificate 证书实体，供 TLS/Reality/Hysteria2/TUIC 等需证书的协议复用。
-// 签发来源：self_signed（一键自签）或 manual（手动导入 PEM）；不做 ACME。
+// 签发来源：self_signed（一键自签）、manual（手动导入 PEM）或
+// acme（Let's Encrypt 自动签发，见 internal/acme）。
 type Certificate struct {
 	Base
 	Name      string     `gorm:"type:varchar(128);not null" json:"name"`
-	Type      string     `gorm:"type:varchar(16);not null" json:"type"` // self_signed | manual
+	Type      string     `gorm:"type:varchar(16);not null" json:"type"` // self_signed | manual | acme
 	Domains   string     `gorm:"type:text" json:"domains"`              // JSON []string（SAN）
 	CertPEM   string     `gorm:"type:text" json:"-"`                    // 🔐 证书 PEM（加密落库）
 	KeyPEM    string     `gorm:"type:text" json:"-"`                    // 🔐 私钥 PEM（加密落库）
 	Issuer    string     `gorm:"type:varchar(255)" json:"issuer"`
 	NotBefore *time.Time `gorm:"type:datetime" json:"not_before"`
 	NotAfter  *time.Time `gorm:"type:datetime" json:"not_after"`
-	Status    string     `gorm:"type:varchar(16);not null;default:'valid'" json:"status"` // valid | invalid | expired
+	Status    string     `gorm:"type:varchar(32);not null;default:'valid'" json:"status"` // valid | invalid | expired | issuing | failed
 	LastError string     `gorm:"type:text" json:"last_error"`
 }
 
