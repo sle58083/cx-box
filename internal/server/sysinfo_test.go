@@ -33,3 +33,20 @@ func TestCollectServerStatsSane(t *testing.T) {
 		t.Fatalf("百分比越界: %+v", st)
 	}
 }
+
+func TestParseIPFromEcho(t *testing.T) {
+	cases := map[string]string{
+		"82.158.90.97":               "82.158.90.97",
+		" 82.158.90.97\n":            "82.158.90.97",
+		"fl=1\nip=203.0.113.7\nts=1": "203.0.113.7",
+		"2001:db8::1":                "2001:db8::1",
+		"not an ip":                  "",
+		"":                           "",
+		"<html>error</html>":         "",
+	}
+	for in, want := range cases {
+		if got := parseIPFromEcho(in); got != want {
+			t.Fatalf("parseIPFromEcho(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
