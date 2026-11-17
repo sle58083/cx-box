@@ -312,6 +312,7 @@ show_help() {
     echo "  cx-box token        生成新的 API token"
     echo "  cx-box firewall-on  开启防火墙（自动放行所需端口）"
     echo "  cx-box firewall-off 关闭防火墙"
+    echo "  cx-box firewall     查看防火墙状态"
     echo "  cx-box bbr          查看/启用 BBR"
     echo "  cx-box help         显示本帮助"
 }
@@ -348,8 +349,9 @@ show_menu() {
   ————————————
   ${green}21.${plain} 开启防火墙（自动放行面板/订阅/SSH 与全部协议端口）
   ${green}22.${plain} 关闭防火墙
+  ${green}23.${plain} 查看防火墙状态
  "
-    echo && read -p "请输入选择 [0-22]: " num
+    echo && read -p "请输入选择 [0-23]: " num
     case "${num}" in
     0) exit 0 ;;
     1) install_panel ;;
@@ -374,7 +376,8 @@ show_menu() {
     20) update_shell ;;
     21) ${BIN} firewall -on ;;
     22) ${BIN} firewall -off ;;
-    *) LOGE "Please enter a correct number [0-22]" && show_menu ;;
+    23) ${BIN} firewall -status ;;
+    *) LOGE "Please enter a correct number [0-23]" && show_menu ;;
     esac
 }
 
