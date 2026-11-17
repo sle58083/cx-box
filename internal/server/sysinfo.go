@@ -1,7 +1,11 @@
 package server
 
 import (
+	"context"
+	"io"
 	"math"
+	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +26,8 @@ type serverStats struct {
 	DiskPercent   float64 `json:"disk_percent"`
 	Load1         float64 `json:"load1"`
 	UptimeSeconds int64   `json:"uptime_seconds"`
+	PublicIP      string  `json:"public_ip"`
+	LocalIP       string  `json:"local_ip"`
 }
 
 var (
@@ -119,6 +125,115 @@ func parseMeminfo(content string) (total, avail uint64) {
 
 func round1(f float64) float64 { return math.Round(f*10) / 10 }
 
+// localIP 取第一个非回环网卡的 IPv4 地址（NAT 机上即内网地址）。
+func localIP() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && !ip.IsLoopback() {
+				if ip4 := ip.To4(); ip4 != nil {
+					return ip4.String()
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// 公网 IP 靠外部回显服务探测：异步刷新 + 缓存，/status 永不阻塞；
+// 探测失败就留空（前端显示「检测中…/未知」），成功缓存 30 分钟，
+// 失败最多每分钟重试一次。
+var ipEchoURLs = []string{
+	"https://api.ipify.org",
+	"https://ifconfig.me/ip",
+	"https://www.cloudflare.com/cdn-cgi/trace",
+}
+
+var (
+	pubMu      sync.Mutex
+	pubIP      string
+	pubLastTry time.Time
+)
+
+// parseIPFromEcho 从回显服务响应里提取 IP：纯文本 IP 直接认，
+// Cloudflare trace 的多行 k=v 取 ip= 行。
+func parseIPFromEcho(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "ip=")
+		if ip := net.ParseIP(line); ip != nil {
+			return ip.String()
+		}
+	}
+	return ""
+}
+
+func fetchPublicIPOnce() string {
+	client := &http.Client{Timeout: 4 * time.Second}
+	for _, u := range ipEchoURLs {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			cancel()
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		cancel()
+		if ip := parseIPFromEcho(string(body)); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func currentPublicIP() string {
+	pubMu.Lock()
+	if pubIP != "" && time.Since(pubLastTry) < 30*time.Minute {
+		v := pubIP
+		pubMu.Unlock()
+		return v
+	}
+	if time.Since(pubLastTry) < time.Minute {
+		v := pubIP
+		pubMu.Unlock()
+		return v
+	}
+	pubLastTry = time.Now()
+	stale := pubIP
+	pubMu.Unlock()
+	go func() {
+		if ip := fetchPublicIPOnce(); ip != "" {
+			pubMu.Lock()
+			pubIP = ip
+			pubMu.Unlock()
+		}
+	}()
+	return stale
+}
+
 // collectServerStats 汇总一次服务器状态采样。
 func collectServerStats() serverStats {
 	var st serverStats
@@ -153,5 +268,7 @@ func collectServerStats() serverStats {
 			}
 		}
 	}
+	st.LocalIP = localIP()
+	st.PublicIP = currentPublicIP()
 	return st
 }
