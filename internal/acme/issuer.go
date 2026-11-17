@@ -100,11 +100,16 @@ func (is *issuer) issue(ctx context.Context, domains []string) (string, string, 
 			}
 		}
 	}
+	// WaitOrder 在订单 Ready（全部授权通过、待提交 CSR）或 Valid 时
+	// 返回；提交 CSR 完成 finalize、再等到 Valid 并下载证书，都由
+	// CreateOrderCert 内部完成。此处不能要求状态必须是 Valid——
+	// Ready 才是 finalize 前的正常状态（v0.5.15 实测踩中：订单明明
+	// 一切正常却报「证书订单状态异常: ready」）。
 	finalOrder, err := client.WaitOrder(ctx, order.URI)
 	if err != nil {
-		return "", "", fmt.Errorf("等待证书签发失败: %w", err)
+		return "", "", fmt.Errorf("等待域名验证完成失败: %w", err)
 	}
-	if finalOrder.Status != acme.StatusValid {
+	if finalOrder.Status != acme.StatusReady && finalOrder.Status != acme.StatusValid {
 		return "", "", fmt.Errorf("证书订单状态异常: %s", finalOrder.Status)
 	}
 
