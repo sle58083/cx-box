@@ -78,6 +78,45 @@ main h2::before{content:"";width:4px;height:20px;border-radius:99px;background:v
 .card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(34,211,238,.55),rgba(129,140,248,.45),transparent)}
 .card .k{color:var(--muted);font-size:12.5px;letter-spacing:.05em}
 .card .v{font-size:17px;font-weight:700;margin-top:3px;word-break:break-all;color:#f1f5f9}
+.card .s{color:var(--faint);font-size:12px;margin-top:2px}
+/* 仪表盘（状态页） */
+.hero{position:relative;overflow:hidden;display:flex;gap:18px;flex-wrap:wrap;background:linear-gradient(120deg,rgba(34,211,238,.10),rgba(17,25,44,.66) 45%,rgba(129,140,248,.10));border:1px solid var(--line);border-radius:18px;padding:22px 24px;margin-bottom:16px;backdrop-filter:blur(8px)}
+.hero-main{flex:1 1 420px;min-width:280px}
+.hero-kicker{font-size:11.5px;letter-spacing:.22em;color:var(--cy);font-weight:700}
+.hero-title{font-size:24px;font-weight:800;margin:5px 0 4px;color:#f1f5f9}
+.hero-desc{color:var(--muted);font-size:13px;margin-bottom:14px}
+.hero-actions{display:flex;gap:9px;flex-wrap:wrap}
+.hero-side{flex:0 1 230px;min-width:200px;background:rgba(2,6,17,.45);border:1px solid var(--line-soft);border-radius:14px;padding:14px 16px;align-self:flex-start}
+.hero-side .k{color:var(--muted);font-size:12px;letter-spacing:.06em}
+.hero-state{font-size:19px;font-weight:800;margin-top:3px}
+.hero-state.ok{color:var(--ok)}
+.hero-state.bad{color:var(--danger)}
+.dash-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;margin-bottom:14px}
+.panel-box{background:var(--card);border:1px solid var(--line-soft);border-radius:16px;padding:16px 18px;backdrop-filter:blur(8px)}
+.box-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.box-head h3{margin:0;font-size:15px}
+.box-head .link{background:none;border:none;color:var(--cy);padding:2px 4px;font-size:12.5px;box-shadow:none}
+.srv-row{margin-bottom:12px}
+.srv-row .r1{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px}
+.srv-row .r1 .rv{color:var(--muted);font-size:12.5px}
+.meter{height:6px;border-radius:99px;background:rgba(148,163,184,.14);overflow:hidden}
+.meter i{display:block;height:100%;border-radius:99px;background:var(--grad);transition:width .4s ease}
+.srv-kv{display:flex;justify-content:space-between;font-size:13px;padding:7px 0;border-top:1px solid var(--line-soft)}
+.srv-kv .rv{color:var(--muted)}
+.quick-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.quick-item{display:flex;gap:11px;align-items:flex-start;text-align:left;background:rgba(2,6,17,.35);border:1px solid var(--line-soft);border-radius:13px;padding:13px 14px;box-shadow:none;width:100%}
+.quick-item:hover{border-color:var(--line);background:rgba(56,189,248,.06);transform:none;box-shadow:none}
+.quick-item .qi-ic{width:30px;height:30px;flex:none;border-radius:9px;background:rgba(56,189,248,.10);display:flex;align-items:center;justify-content:center;color:var(--cy)}
+.quick-item .qi-ic svg{width:17px;height:17px}
+.quick-item b{display:block;font-size:13.5px}
+.quick-item span{color:var(--faint);font-size:12px}
+.mini-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line-soft)}
+.mini-row:first-child{border-top:none}
+.mini-row .mr-main{min-width:0}
+.mini-row b{font-size:13.5px}
+.mini-row .small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mini-row .mr-right{text-align:right;flex:none}
+.mini-row .meter{width:110px;margin-top:5px}
 table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);border:1px solid var(--line-soft);border-radius:16px;overflow:hidden;backdrop-filter:blur(8px)}
 th,td{padding:11px 14px;text-align:left;border-bottom:1px solid var(--line-soft);vertical-align:top}
 th{background:rgba(56,189,248,.055);color:var(--muted);font-weight:600;font-size:12.5px;letter-spacing:.05em}
@@ -150,16 +189,54 @@ tr:last-child td{border-bottom:none}
     <div class="foot" id="sideFoot"></div>
   </aside>
   <main>
-    <!-- 状态 -->
+    <!-- 状态（仪表盘） -->
     <section id="view-status">
-      <h2>状态</h2>
+      <div class="hero">
+        <div class="hero-main">
+          <div class="hero-kicker">CX-BOX PANEL V<span id="heroVer">-</span></div>
+          <div class="hero-title">网络节点管理控制台</div>
+          <div class="hero-desc">入站、出站、客户端与订阅统一管理；保存后自动应用生效，无需手动重启。</div>
+          <div class="hero-actions">
+            <button class="primary" id="heroAddInbound">新建入站</button>
+            <button id="heroAddClient">添加客户</button>
+            <button id="applyBtn">应用配置并重启内核</button>
+          </div>
+        </div>
+        <div class="hero-side">
+          <div class="k">系统状态</div>
+          <div class="hero-state" id="heroState">-</div>
+          <div class="small" id="heroStateSub"></div>
+        </div>
+      </div>
       <div class="cards" id="statusCards"></div>
-      <h2 style="margin-top:24px">服务器状态</h2>
-      <div class="cards" id="serverCards"></div>
+      <div class="dash-cols">
+        <div class="panel-box">
+          <div class="box-head"><h3>本机服务器</h3><span class="small">资源与运行状态</span></div>
+          <div id="serverCards"></div>
+        </div>
+        <div class="panel-box">
+          <div class="box-head"><h3>快捷入口</h3><span class="small">常用操作一步到位</span></div>
+          <div class="quick-grid">
+            <button class="quick-item" data-goto="inbounds"><span class="qi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></span><span><b>入站管理</b><span>协议 / 端口 / 分享</span></span></button>
+            <button class="quick-item" data-goto="clients"><span class="qi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.4"/><path d="M3.6 19.2c.6-3.1 2.7-4.7 5.4-4.7s4.8 1.6 5.4 4.7"/><path d="M15.5 5.2a3.4 3.4 0 010 5.9M18 14.9c1.5.7 2.4 2 2.7 4"/></svg></span><span><b>客户管理</b><span>订阅 / 流量 / 出口</span></span></button>
+            <button class="quick-item" data-goto="certs"><span class="qi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 2.8v5.4c0 4.4-2.9 7.7-7 9.8-4.1-2.1-7-5.4-7-9.8V5.8z"/><path d="M9.2 11.8l2 2 3.8-4"/></svg></span><span><b>证书管理</b><span>自签 / 导入 / 自动申请</span></span></button>
+            <button class="quick-item" data-goto="settings"><span class="qi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9.5M19.5 7H21M4 17h3.5M13.5 17H21"/><circle cx="16.5" cy="7" r="2.3"/><circle cx="10.5" cy="17" r="2.3"/></svg></span><span><b>系统设置</b><span>端口 / 路径 / 订阅地址</span></span></button>
+          </div>
+        </div>
+      </div>
+      <div class="dash-cols">
+        <div class="panel-box">
+          <div class="box-head"><h3>入站概览</h3><button class="link" data-goto="inbounds">查看全部</button></div>
+          <div id="recentInbounds"><div class="small">加载中…</div></div>
+        </div>
+        <div class="panel-box">
+          <div class="box-head"><h3>客户概览</h3><button class="link" data-goto="clients">查看全部</button></div>
+          <div id="recentClients"><div class="small">加载中…</div></div>
+        </div>
+      </div>
       <div class="toolbar">
-        <button class="primary" id="applyBtn">应用配置并重启内核</button>
         <button id="refreshStatusBtn">刷新</button>
-        <span class="small">入站/出站/客户端保存后会自动应用生效；此按钮用于手动重新应用。</span>
+        <span class="small">入站/出站/客户端保存后会自动应用生效；「应用配置并重启内核」用于手动重新应用。</span>
       </div>
     </section>
 
@@ -312,32 +389,63 @@ $("nav").addEventListener("click", (e)=>{
   if (btn.dataset.view === "settings") loadSettings();
 });
 
-/* ---------- 状态 ---------- */
+/* ---------- 状态（仪表盘） ---------- */
+function gotoView(v){
+  const btn = document.querySelector('#nav button[data-view="' + v + '"]');
+  if (btn) btn.click();
+}
+document.querySelectorAll("[data-goto]").forEach(el=>{
+  el.addEventListener("click", ()=>gotoView(el.dataset.goto));
+});
+$("heroAddInbound").addEventListener("click", ()=>{ gotoView("inbounds"); $("addInboundBtn").click(); });
+$("heroAddClient").addEventListener("click", ()=>{ gotoView("clients"); $("addClientBtn").click(); });
+
 async function loadStatus(){
   try{
     statusData = await api("status");
     const d = statusData;
     $("sideFoot").textContent = "v" + d.version + " · 内核 " + d.kernel_version;
+    $("heroVer").textContent = d.version;
+    const hs = $("heroState");
+    hs.textContent = d.kernel_running ? "运行正常" : "内核未运行";
+    hs.className = "hero-state " + (d.kernel_running ? "ok" : "bad");
+    $("heroStateSub").textContent = "面板 :" + d.panel_port + " · 订阅 :" + d.sub_port + " · 内核 " + d.kernel_version;
     const sv = d.server || {};
     const fmtSize = (b)=>{ if (!b) return "-"; const u=["B","KB","MB","GB","TB"]; let i=0, n=b; while(n>=1024&&i<4){n/=1024;i++;} return n.toFixed(i?1:0)+" "+u[i]; };
     const upt = sv.uptime_seconds ? (Math.floor(sv.uptime_seconds/86400) + " 天 " + Math.floor(sv.uptime_seconds%86400/3600) + " 小时") : "-";
-    $("serverCards").innerHTML = [
-      ["CPU 使用率", (sv.cpu_percent ?? 0) + " %"],
-      ["内存使用", fmtSize(sv.mem_used) + " / " + fmtSize(sv.mem_total) + "（" + (sv.mem_percent ?? 0) + "%）"],
-      ["磁盘使用", fmtSize(sv.disk_used) + " / " + fmtSize(sv.disk_total) + "（" + (sv.disk_percent ?? 0) + "%）"],
-      ["系统负载（1 分钟）", sv.load1 ?? "-"],
-      ["系统运行时间", upt],
-    ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+    const meter = (label, pct, val)=>`<div class="srv-row"><div class="r1"><span>${label}</span><span class="rv">${val}</span></div><div class="meter"><i style="width:${Math.min(100, Math.max(0, pct||0))}%"></i></div></div>`;
+    $("serverCards").innerHTML =
+      meter("CPU 使用率", sv.cpu_percent, (sv.cpu_percent ?? 0) + " %") +
+      meter("内存", sv.mem_percent, fmtSize(sv.mem_used) + " / " + fmtSize(sv.mem_total) + "（" + (sv.mem_percent ?? 0) + "%）") +
+      meter("磁盘", sv.disk_percent, fmtSize(sv.disk_used) + " / " + fmtSize(sv.disk_total) + "（" + (sv.disk_percent ?? 0) + "%）") +
+      `<div class="srv-kv"><span>系统负载（1 分钟）</span><span class="rv">${sv.load1 ?? "-"}</span></div>` +
+      `<div class="srv-kv"><span>系统运行时间</span><span class="rv">${upt}</span></div>` +
+      `<div class="srv-kv"><span>面板地址</span><span class="rv">:${d.panel_port}${esc(d.panel_path)}</span></div>` +
+      `<div class="srv-kv"><span>订阅地址</span><span class="rv">:${d.sub_port}${esc(d.sub_path)}</span></div>`;
+    // 统计卡片需要入站/客户计数，单独取，失败不影响主状态展示。
+    let ins = [], cls = [];
+    try{ ins = await api("inbounds"); }catch(e){}
+    try{ cls = await api("clients"); }catch(e){}
+    const inOn = ins.filter(i=>i.status === "enabled").length;
+    const clOn = cls.filter(c=>c.enable !== false).length;
     $("statusCards").innerHTML = [
-      ["面板版本", "cx-box " + esc(d.version)],
-      ["内核版本", esc(d.kernel_version)],
-      ["内核进程", `<span class="dot ${d.kernel_running?"on":""}"></span>${d.kernel_running?"运行中":"未运行"}`],
-      ["内核就绪", d.kernel_ready ? "是" : "否（启动时下载/校验失败）"],
-      ["面板地址", ":" + d.panel_port + esc(d.panel_path)],
-      ["订阅地址", ":" + d.sub_port + esc(d.sub_path)],
-      ["累计上行", fmtBytes(d.traffic_up || 0)],
-      ["累计下行", fmtBytes(d.traffic_down || 0)],
-    ].map(([k,v])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+      ["面板版本", "cx-box " + esc(d.version), "当前运行版本"],
+      ["内核版本", esc(d.kernel_version), d.kernel_running ? "进程运行中" : "进程未运行"],
+      ["启用入站", inOn + " / " + ins.length, "启用 / 总数"],
+      ["启用客户", clOn + " / " + cls.length, "启用 / 总数"],
+      ["总上传", fmtBytes(d.traffic_up || 0), "内核累计统计"],
+      ["总下载", fmtBytes(d.traffic_down || 0), "内核累计统计"],
+    ].map(([k,v,s])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+    $("recentInbounds").innerHTML = ins.length ? ins.slice(0, 5).map(i=>`
+      <div class="mini-row"><div class="mr-main"><b>${esc(i.name)}</b><div class="small">${esc(i.type)} · 端口 ${i.port}${i.is_user_inbound ? " · 用户入口" : ""}</div></div>
+      <span class="badge ${i.status === "enabled" ? "" : "off"}">${i.status === "enabled" ? "启用" : "禁用"}</span></div>`).join("")
+      : '<div class="small">暂无入站</div>';
+    $("recentClients").innerHTML = cls.length ? cls.slice(0, 5).map(c=>{
+      const quota = (c.total_gb || 0) * 1e9;
+      const pct = quota ? Math.min(100, Math.round((c.used_bytes || 0) / quota * 100)) : 0;
+      return `<div class="mini-row"><div class="mr-main"><b>${esc(c.comment || c.email)}</b><div class="small">${esc(c.email)}</div></div>
+      <div class="mr-right"><span class="small">${fmtBytes(c.used_bytes || 0)} / ${c.total_gb ? c.total_gb + " GB" : "无限"}</span>${quota ? `<div class="meter"><i style="width:${pct}%"></i></div>` : ""}</div></div>`;
+    }).join("") : '<div class="small">暂无客户</div>';
   }catch(e){ toast(e.message); }
 }
 $("refreshStatusBtn").addEventListener("click", loadStatus);
