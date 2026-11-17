@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
@@ -10,8 +11,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/sle58083/cx-box/internal/acme"
 	"github.com/sle58083/cx-box/internal/kernel"
 	"github.com/sle58083/cx-box/internal/model"
 	"github.com/sle58083/cx-box/internal/renderer"
@@ -68,6 +71,8 @@ func (s *Server) registerPanelRoutes(r *gin.Engine, panelPath string) {
 	auth.GET("/certificates", s.listCertificates)
 	auth.POST("/certificates", s.createCertificate)
 	auth.POST("/certificates/selfsigned", s.createSelfSigned)
+	auth.GET("/certificates/acme/config", s.getACMEConfig)
+	auth.POST("/certificates/acme", s.createACMECertificate)
 	auth.DELETE("/certificates/:id", s.deleteCertificate)
 }
 
@@ -188,10 +193,16 @@ func (s *Server) handleGetSetting(c *gin.Context) {
 
 func (s *Server) handleUpdateSetting(c *gin.Context) {
 	var req model.Setting
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWith(&req, binding.JSON); err != nil {
 		failMsg(c, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
+	// sub_node_host 需要能被清空（回到「跟随访问地址」），而结构体更新
+	// 跳过零值，所以单独探测该键是否出现在请求里，出现则显式写列。
+	var probe struct {
+		SubNodeHost *string `json:"sub_node_host"`
+	}
+	_ = c.ShouldBindBodyWith(&probe, binding.JSON)
 	cur, err := s.setting.Get()
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err)
@@ -201,6 +212,13 @@ func (s *Server) handleUpdateSetting(c *gin.Context) {
 	if err := s.setting.Update(&req); err != nil {
 		fail(c, http.StatusInternalServerError, err)
 		return
+	}
+	if probe.SubNodeHost != nil {
+		if err := s.db.Model(&model.Setting{}).Where("id = ?", cur.ID).
+			Update("sub_node_host", sub.SanitizeNodeHost(*probe.SubNodeHost)).Error; err != nil {
+			fail(c, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	ok(c, gin.H{"updated": true, "note": "端口/路径修改将在重启后生效"})
 }
@@ -637,6 +655,52 @@ type selfSignedReq struct {
 	Name    string   `json:"name"`
 	Domains []string `json:"domains"`
 	Days    int      `json:"days"`
+}
+
+// acmeManager 组装 ACME 管理器；签发成功后自动应用配置（与证书绑定
+// 落盘、入站引用同一条 Apply 路径）。令牌只经管理器进 settings 的
+// json:"-" 字段，任何响应都不回明文。
+func (s *Server) acmeManager() *acme.Manager {
+	m := acme.NewManager(s.db)
+	if s.cfg != nil {
+		m.OnIssued = func(ctx context.Context) { _ = s.cfg.Apply(ctx) }
+	}
+	return m
+}
+
+func (s *Server) getACMEConfig(c *gin.Context) {
+	email, tokenSet, err := s.acmeManager().Config()
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err)
+		return
+	}
+	ok(c, gin.H{"email": email, "token_configured": tokenSet})
+}
+
+type acmeCertReq struct {
+	Name    string   `json:"name"`
+	Domains []string `json:"domains"`
+	Email   string   `json:"email"`
+	CFToken string   `json:"cf_token"`
+}
+
+func (s *Server) createACMECertificate(c *gin.Context) {
+	var req acmeCertReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		failMsg(c, http.StatusBadRequest, "证书名称不能为空")
+		return
+	}
+	cert, err := s.acmeManager().CreateAndIssue(req.Name, req.Domains, req.Email, req.CFToken)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err)
+		return
+	}
+	// 签发是异步的（DNS 传播需要时间）：立即返回记录，前端轮询状态。
+	ok(c, cert)
 }
 
 func (s *Server) createSelfSigned(c *gin.Context) {
