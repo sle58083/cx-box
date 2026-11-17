@@ -30,6 +30,10 @@ type Service struct {
 	// 由流量采集器检测超限后经 SetIPBlocks 注入，随每次 Generate 生效。
 	ipMu     sync.Mutex
 	ipBlocks map[string][]string
+
+	// AfterApply 在每次应用成功（内核已按新配置重启）后调用，可为 nil。
+	// 防火墙端口同步挂在这里：新建/改端口/删入站后自动增删放行规则。
+	AfterApply func(ctx context.Context)
 }
 
 // SetIPBlocks 更新 IP 数限制的封锁集合（采集器在集合变化时调用，
@@ -173,7 +177,13 @@ func (s *Service) Apply(ctx context.Context) error {
 	if err := os.Rename(tmpPath, configPath); err != nil {
 		return fmt.Errorf("configsvc: 写盘失败: %w", err)
 	}
-	return s.kernel.Restart(ctx)
+	if err := s.kernel.Restart(ctx); err != nil {
+		return err
+	}
+	if s.AfterApply != nil {
+		s.AfterApply(ctx)
+	}
+	return nil
 }
 
 // resolveCertBindings 把入站的证书绑定落盘并注入 TLS 证书路径（就地修改 inbounds）。
