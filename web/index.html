@@ -1121,17 +1121,23 @@ window.exportSub = async (id)=>{
   if (!statusData) await loadStatus();
   // 订阅地址带 #名称：v2rayN 等客户端导入时以它为订阅名（可用中文）。
   const url = subURL(c) + "#" + encodeURIComponent(c.sub_name || c.email || "");
+  const clashURL = subURL(c) + "?format=clash";
   openModal(`<h3>导出订阅 · ${esc(c.email)}</h3>
   <label>订阅地址</label>
   <input id="subExportURL" readonly value="${esc(url)}" onclick="this.select()">
   <p class="small">把这个地址导入客户端 App（如 v2rayNG / Shadowrocket 等）即可自动拉取该客户端的全部节点。地址含专属凭据，请勿外传；使用自动证书的节点，客户端需开启「允许不安全」。</p>
+  <label>Clash 订阅地址（Clash Verge / Mihomo / Stash 等）</label>
+  <input id="subExportClashURL" readonly value="${esc(clashURL)}" onclick="this.select()">
+  <p class="small">Clash 系客户端用这个地址导入（直接用上面的地址导入也可以，服务器会按客户端自动返回 Clash 格式）。</p>
   <div style="text-align:center;margin:14px 0 4px"><img id="subExportQR" alt="订阅二维码" width="200" height="200"></div>
   <p class="small" style="text-align:center;margin:0 0 6px">用客户端 App 扫码导入</p>
   <div class="actions"><button type="button" onclick="closeModal()">关闭</button>
   <button type="button" id="subDlBtn">下载订阅地址</button>
+  <button type="button" id="subCopyClashBtn">复制 Clash 地址</button>
   <button class="primary" type="button" id="subCopyBtn">复制订阅地址</button></div>
   <div id="subNodes" style="margin-top:18px"><p class="small">正在加载单个节点…</p></div>`);
   $("subCopyBtn").addEventListener("click", ()=>copyText(url));
+  $("subCopyClashBtn").addEventListener("click", ()=>copyText(clashURL));
   $("subDlBtn").addEventListener("click", ()=>{
     const blob = new Blob([url + "\n"], {type:"text/plain;charset=utf-8"});
     const a = document.createElement("a");

@@ -64,10 +64,34 @@ func (g *Generator) nodeHostOverride() string {
 	return SanitizeNodeHost(st.SubNodeHost)
 }
 
+// nodeEntry 是订阅里的一条节点：出站视图（已做 SNI / insecure 修正、
+// 派生节点已换名）+ 对应代理用户 + 协议渲染器。各输出格式（分享链接、
+// Clash YAML）共用同一份节点清单，保证节点集合与凭据完全一致。
+type nodeEntry struct {
+	ob   model.Outbound
+	user renderer.ProxyUser
+	r    renderer.ProtocolRenderer
+}
+
 // Links 返回某订阅 ID 对应客户端的分享链接列表。
 // host 是订阅被访问时的主机名（不含端口），用作链接里的服务器地址。
 // 客户端不存在返回 gorm.ErrRecordNotFound；被禁用/到期/超流量返回业务错误。
 func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
+	entries, client, err := g.collect(subID, host)
+	if err != nil {
+		return nil, client, err
+	}
+	links := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if uri, err := e.r.SubscriptionURI(e.ob, e.user); err == nil {
+			links = append(links, uri)
+		}
+	}
+	return links, client, nil
+}
+
+// collect 校验客户端状态并生成节点清单（Links 与 Clash 的共同前半段）。
+func (g *Generator) collect(subID, host string) ([]nodeEntry, *model.Client, error) {
 	client, err := g.clients.GetBySubID(subID)
 	if err != nil {
 		return nil, nil, err
@@ -125,7 +149,7 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 		}
 	}
 
-	var links []string
+	var entries []nodeEntry
 	for _, in := range inbounds {
 		r, ok := renderer.Get(in.Type)
 		if !ok {
@@ -151,14 +175,10 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 		if g.selfSignedCert(in) {
 			ob.TLS = fillInsecure(ob.TLS)
 		}
-		uri, err := r.SubscriptionURI(ob, user)
-		if err != nil {
-			continue // 该协议无标准订阅格式或参数不全，跳过
-		}
-		links = append(links, uri)
-		// 派生链接：与基础链接同入站，凭据换成派生凭据（入站侧有对应
+		entries = append(entries, nodeEntry{ob: ob, user: user, r: r})
+		// 派生节点：与基础节点同入站，凭据换成派生凭据（入站侧有对应
 		// 派生用户，路由直达该出口），节点名后缀出口名以便客户端里选。
-		// 只选了一个出口时基础链接已直达它，不再生成重复的派生链接。
+		// 只选了一个出口时基础节点已直达它，不再生成重复的派生节点。
 		if singleSelection {
 			continue
 		}
@@ -171,12 +191,10 @@ func (g *Generator) Links(subID, host string) ([]string, *model.Client, error) {
 				UUID: renderer.DerivedUUID(client.UUID, obr.id),
 			}
 			duser.Password = renderer.DerivedPassword(pw, obr.id)
-			if duri, derr := r.SubscriptionURI(dob, duser); derr == nil {
-				links = append(links, duri)
-			}
+			entries = append(entries, nodeEntry{ob: dob, user: duser, r: r})
 		}
 	}
-	return links, client, nil
+	return entries, client, nil
 }
 
 // targetInbounds 决定客户端可用的入站：绑定了单个入站时只用它，
