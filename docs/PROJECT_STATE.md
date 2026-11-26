@@ -1,6 +1,6 @@
 # cx-box 项目状态快照
 
-**快照时间：2026-11-19 ｜ 当前版本：v0.5.18 ｜ 内核：sing-box 1.14.4**
+**快照时间：2026-11-26 ｜ 当前版本：v0.5.19 ｜ 内核：sing-box 1.14.4**
 每次发版后更新本文件。AI 接手先读 `AGENTS.md`，再读本文件。
 
 ## 1. 已完成（截至 v0.5.18，均为已发布状态）
@@ -12,6 +12,7 @@
 - **出口体系**：selector 全局默认出口；出站分享链接批量导入（9 种 scheme）；按客户端指定出口（单选直达 / 多选自动合成 urltest 测速组）；订阅多出口派生节点（派生用户机制）。
 - **证书**：一键自签、PEM 导入（配对校验、被引用禁删）、ACME 自动签发与续签（Cloudflare DNS-01，支持泛域名）、无证书时自动证书兜底、订阅侧 SNI 补全与自签 insecure 标记。
 - **防火墙**：一键开关托管（ufw/firewalld/iptables），应用后自动同步端口；管理菜单 0–23（含 21 开启 / 22 关闭 / 23 查看状态）。
+- **Clash 订阅**：订阅加 `?format=clash`（别名 mihomo）原生输出 Mihomo YAML（renderer 的 ClashProxy 映射，全协议含 ss 2022 组合密码、多出口派生节点；分组为自动选择 url-test + 节点选择 select + MATCH 规则）；未带 format 时按 UA 自动识别 Clash 系客户端返回 YAML，其余仍回 base64；面板导出弹窗带 Clash 地址与复制按钮。
 - **发布**：GitHub Actions 按 `v*` tag 构建 5 个 Linux 架构包，install.sh 拉 Release 安装；全自动安装走 `CXBOX_AUTO=1`（随机账号与面板路径）。
 
 ## 2. 关键设计决策（为什么这样，以及不要改回去）
@@ -79,3 +80,4 @@
 | v0.5.16 | ACME Ready 状态机修复 |
 | v0.5.17 | 状态页仪表盘改版、菜单加查看防火墙 |
 | v0.5.18 | 状态页公网/本机 IP 显示 |
+| v0.5.19 | 订阅原生 Clash 格式（?format=clash + UA 自动识别）、导出弹窗 Clash 地址 |
